@@ -11,17 +11,17 @@ double hist_yhi[4] = { 0.1, 0.1, 0.1, 0.1 }; // Volts
 double pulsearea_max = 10;
 
 // Settings
-double cfd_frac = 0.50;// Fraction of height to measure to
+double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
 double repeat_thresh = 0.049; // When checking for clipping, signal must be > this threshold
 unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01, 0.01 }; // Discard if whole signal < signal_thresh
-int interp_type = 0; // 0 is linear, 1 is cubic spline
+int interp_type = 0	; // 0 is linear, 1 is cubic spline
 int smoothing = 1; // true to smooth
 
 // Floating-point equality check
-const double epsilon = 0.0001;
+const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
 unsigned int active_channels[] = { 1, 2, 3 };
@@ -146,7 +146,11 @@ void pulsedt(const char *filename)
 		int signal_good[4] = { 0, 0, 0, 0 };
 		// discard is logically boolean. Its value is the repeat channel + 1
 		int discard = 0;
-
+		int StevesBool = 1; //Steven Edit - testing new methods
+		float N = 100;
+		float T = 30;
+		int L = 6;
+		double upsampledpoints[2][100] = {{0}};
 		double prevval[4] = { -10000, -10000, -10000, -10000 };
 		unsigned int repeat[4] = { 0, 0, 0, 0 };
 
@@ -220,9 +224,7 @@ void pulsedt(const char *filename)
 
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
-
 			hPulseHeight[c]->Fill(peak_val[c]);
-
 			// integrate the whole signal
 			// FIXME: There should be a smarter way to do this
 			//TGraph g(1024-2*skip, time[c], waveform[c]);
@@ -241,27 +243,59 @@ void pulsedt(const char *filename)
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			double vf = peak_val[c] * cfd_frac;
-			for (int j=peak_idx[c]; j>skip-1; j--) {
+			for (int j=peak_idx[c]; j>peak_idx[c]-skip 	; j--) {
 				if (fabs(waveform[c][j]) <= vf) {
-					for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
-						int idx = j + p;
-						double t = time[c][idx];
-						double v = fabs(waveform[c][idx]);
-						// swap x and y because we can't eval on y
-						interp_graph->SetPoint(interp_pts_down+p, v, t);
-					}
-					double t = -1000;
-					if (interp_type == 1) {
-						t = interp_graph->Eval(vf, 0, "S");
-					} else {
-						t = interp_graph->Eval(vf);
-					}
+					if (StevesBool == 0) {
+						for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
+							int idx = j + p;
+							double t = time[c][idx];
+							double v = fabs(waveform[c][idx]);
+							// swap x and y because we can't eval on y
+							interp_graph->SetPoint(interp_pts_down+p, v, t);
+							}
+						double t = -1000;
+						if (interp_type == 1) {
+							t = interp_graph->Eval(vf, 0, "S");
+						} else {
+							t = interp_graph->Eval(vf);
+						}
 
-					frac_time[c] = t;
-					break;
-				}
-				if (j == skip) {
-					printf("WARNING: %d: Failed to find fraction (ch%d)\n", i, c+1);
+						frac_time[c] = t;
+						break;
+					}
+					if (StevesBool==1){
+							upsampledpoints[0][0] = waveform[c][j];
+							upsampledpoints[1][0] = time[c][j];
+							double dT = (time[c][j+1]-time[c][j])/N;
+							for (int p = 1;p <=int(N);p++){
+								upsampledpoints[1][p] = upsampledpoints[1][p-1]+dT;
+							}
+							for (int m = 1;m < int(N);m++){
+								upsampledpoints[0][m] = 0;
+								for (int p = 0;p <= L-1;p++){
+									double temp = (p*N+m);
+									double sinc1 = sin(temp*M_PI /N)/(temp*M_PI /N)*exp(-(temp/T)*(temp/T));
+									temp = (float(p)+1)*N-float(m);
+									double sinc2 = sin(temp*M_PI /N)/(temp*M_PI /N)*exp(-(temp/T)*(temp/T));
+									upsampledpoints[0][m] = upsampledpoints[0][m] + waveform[c][j-p]*sinc1+waveform[c][j+1+p]*sinc2;
+								}
+							}
+							for (int n=int(N); n >=0; n--) {
+								if (fabs(upsampledpoints[0][n]) <= vf) {
+									int Aprime = n;
+									int Bprime = n+1;
+									float X1 = upsampledpoints[0][Aprime];
+									float X2 = upsampledpoints[0][Bprime];
+									float Y1 = upsampledpoints[1][Aprime];
+									float Y2 = upsampledpoints[1][Bprime];
+									float slope= (Y2-Y1)/(X2-X1);
+									frac_time[c] = (vf - Y1) / slope + X1;
+								}
+							}
+					}
+					if (j == skip) {
+						printf("WARNING: %d: Failed to find fraction (ch%d)\n", i, c+1);
+					}
 				}
 			}
 		}
