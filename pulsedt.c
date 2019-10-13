@@ -147,10 +147,10 @@ void pulsedt(const char *filename)
 		// discard is logically boolean. Its value is the repeat channel + 1
 		int discard = 0;
 		int StevesBool = 1; //Steven Edit - testing new methods
-		float N = 100;
+		float N = 50;
 		float T = 30;
 		int L = 6;
-		double upsampledpoints[2][100] = {{0}};
+		double upsampledpoints[2][50] = {{0}};
 		double prevval[4] = { -10000, -10000, -10000, -10000 };
 		unsigned int repeat[4] = { 0, 0, 0, 0 };
 
