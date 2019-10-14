@@ -11,7 +11,7 @@ double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
 double pulsearea_max = 10;
 
 // Settings
-double cfd_frac = 0.3;// Fraction of height to measure to
+double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
 double repeat_thresh = 0.049; // When checking for clipping, signal must be > this threshold
 unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
@@ -21,11 +21,11 @@ int interp_type = 0	; // 0 is linear, 1 is cubic spline
 int smoothing = 1; // true to smooth
 //SINC Filtering Settings and array declaration
 float N = 100;
-float T = 100;
+float T = 80;
 int L = 6;
-int StevesBool = 1; //Steven Edit - testing new methods
-double upsampledpoints[1024][100+1] = {{0}};
-double upsampledtimes[1024][100+1] = {{0}};
+int StevesBool = 0; //Steven Edit - testing new methods
+double upsampledpoints[1024][100] = {{0}};
+double upsampledtimes[1024][100] = {{0}};
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
@@ -53,8 +53,8 @@ void upsampletime(double times[4][1024],int c, int idx,int N){
 }
 void upsampledata(double waveform[4][1024],int c,int idx,int N, int L, int T){
 	upsampledpoints[idx][0] =waveform[c][idx];
-	upsampledpoints[idx][N+1] =waveform[c][idx+1];
-	for (int m = 1;m <= int(N);m++){
+	upsampledpoints[idx][N] =waveform[c][idx+1];
+	for (int m = 1;m < int(N);m++){
 		upsampledpoints[idx][m] = 0;
 		for (int p = 0;p <= L-1;p++){
 			double temp = (p*N+m);
@@ -62,6 +62,7 @@ void upsampledata(double waveform[4][1024],int c,int idx,int N, int L, int T){
 			temp = (p+1)*N-m;
 			double sinc2 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
 			upsampledpoints[idx][m] += waveform[c][idx-p]*sinc1 + waveform[c][idx+1+p]*sinc2;
+			//printf("Test: %d,%d,%d,%f,%f,%f\n",m,p,idx,upsampledpoints[idx][m],waveform[c][idx-p]*sinc1,waveform[c][idx+1+p]*sinc2);
 		}
 	}
 }
@@ -157,8 +158,8 @@ void pulsedt(const char *filename)
 	printf("Processing %lld entries\n", nentries);
 
 	// For interpolating to find the constant-fraction time
-	int interp_pts_up = 1; // # points above the principle point
-	int interp_pts_down = 1; // # points below the principle point
+	int interp_pts_up = 2; // # points above the principle point
+	int interp_pts_down = 2; // # points below the principle point
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
 
@@ -289,7 +290,7 @@ void pulsedt(const char *filename)
 			unsigned int c = active_channels[k] - 1;
 			double vf = peak_val[c] * cfd_frac;
 
-			for (int j=peak_idx[c]; j>skip 	; j--) {
+			for (int j=peak_idx[c]+	1; j>skip 	; j--) {
 				//printf("Peak value: %f, wvfm value: %f, j: %d\n",fabs(peak_val[c]),fabs(waveform[c][peak_idx[c]]),j);
 
 				if (fabs(waveform[c][j]) <= vf) {
@@ -313,17 +314,32 @@ void pulsedt(const char *filename)
 					}
 					//Start of SINC Upsampling
 					if (StevesBool==1){
-						upsampledata(waveform,c,j,N, L, T);
-						upsampletime(time,c, j,N);
+							upsampledata(waveform,c,j,N, L, T);
+							upsampletime(time,c, j,N);
 							double t = -1000;
-							for (int n=int(N+1); n >=0; n--) {
+							for (int n=int(N-1); n >=0; n--) {
 								//printf("Point: %f,vf: %f\n",fabs(upsampledpoints[j][n]),vf);
-								if (fabs(upsampledpoints[j][n]) < vf) {
-									float Aprime = upsampledpoints[j][n];
-									float Bprime = upsampledpoints[j][n+1];
-									float XaPrime = n;
-									float Delta = time[c][j+1] - time[c][j];
-									t = time[c][j]+(XaPrime+(vf - Aprime)/(Bprime-Aprime))*Delta/N;
+								if (fabs(upsampledpoints[j][n]) <= vf) {
+									for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
+										int idx = n + p;
+										double t = upsampledtimes[j][idx];
+										double v = fabs(upsampledpoints[j][idx]);
+										interp_graph->SetPoint(interp_pts_down+p, v, t);
+										//printf("%d,%d,%d,Point: %f,vf: %f\n",n,idx,p,fabs(upsampledpoints[j][idx]),vf);
+									//float Aprime = upsampledpoints[j][n];
+									//float Bprime = upsampledpoints[j][n+1];
+									//float XaPrime = n;
+									//float Delta = time[c][j+1] - time[c][j];
+									//t = time[c][j]+(XaPrime+(vf - Aprime)/(Bprime-Aprime))*Delta/N;
+									//break;
+									}
+
+									if (interp_type == 1) {
+										t = interp_graph->Eval(vf, 0, "S");
+									} else {
+										t = interp_graph->Eval(vf);
+									}
+									frac_time[c] = t;
 									break;
 								}
 							}
