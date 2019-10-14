@@ -6,8 +6,8 @@
 #include "sgfilter.h"
 
 // Histogram parameters
-double hist_ylo[4] = { -0.6, -0.6, -0.6, -0.6 }; // Volts
-double hist_yhi[4] = { 0.1, 0.1, 0.1, 0.1 }; // Volts
+double hist_ylo[4] = { -0.5, -0.5, -0.5, -0.5 }; // Volts
+double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
 double pulsearea_max = 10;
 
 // Settings
@@ -18,15 +18,24 @@ unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0	; // 0 is linear, 1 is cubic spline
-int smoothing = 1; // true to smooth
+int smoothing = 0; // true to smooth
 
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = { 1, 2, 3 };
-size_t nactive_channels = 3; // Length of the above array
-
+unsigned int active_channels[] = { 2, 3};
+size_t nactive_channels = 2; // Length of the above array
+double sinc(double i){
+	float result;
+	if(i == 0){
+		result = 0;
+	}
+	if(i!=0){
+		result = sin(i)/i;
+	}
+	return result;
+}
 void pulsedt(const char *filename)
 {
 	TFile *f = new TFile(filename);
@@ -147,10 +156,11 @@ void pulsedt(const char *filename)
 		// discard is logically boolean. Its value is the repeat channel + 1
 		int discard = 0;
 		int StevesBool = 1; //Steven Edit - testing new methods
-		float N = 50;
+		float N = 8;
 		float T = 30;
 		int L = 6;
-		double upsampledpoints[2][50] = {{0}};
+		double upsampledpoints[1024][8] = {{0}};
+		double upsampledtimes[1024][8] = {{0}};
 		double prevval[4] = { -10000, -10000, -10000, -10000 };
 		unsigned int repeat[4] = { 0, 0, 0, 0 };
 
@@ -263,33 +273,32 @@ void pulsedt(const char *filename)
 						frac_time[c] = t;
 						break;
 					}
+					//Start of SINC Upsampling
 					if (StevesBool==1){
-							upsampledpoints[0][0] = waveform[c][j];
-							upsampledpoints[1][0] = time[c][j];
+							upsampledpoints[j][0] = waveform[c][j];
+							upsampledtimes[j][0] = time[c][j];
 							double dT = (time[c][j+1]-time[c][j])/N;
 							for (int p = 1;p <=int(N);p++){
-								upsampledpoints[1][p] = upsampledpoints[1][p-1]+dT;
+								upsampledtimes[j][p] = upsampledtimes[j][p-1]+dT;
 							}
 							for (int m = 1;m < int(N);m++){
-								upsampledpoints[0][m] = 0;
+								upsampledpoints[j][m] = 0;
 								for (int p = 0;p <= L-1;p++){
 									double temp = (p*N+m);
-									double sinc1 = sin(temp*M_PI /N)/(temp*M_PI /N)*exp(-(temp/T)*(temp/T));
-									temp = (float(p)+1)*N-float(m);
-									double sinc2 = sin(temp*M_PI /N)/(temp*M_PI /N)*exp(-(temp/T)*(temp/T));
-									upsampledpoints[0][m] = upsampledpoints[0][m] + waveform[c][j-p]*sinc1+waveform[c][j+1+p]*sinc2;
+									double sinc1 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
+									temp = (p+1)*N-m;
+									double sinc2 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
+									upsampledpoints[j][m] += waveform[c][j-p]*sinc1 + waveform[c][j+1+p]*sinc2;
 								}
 							}
 							for (int n=int(N); n >=0; n--) {
-								if (fabs(upsampledpoints[0][n]) <= vf) {
-									int Aprime = n;
-									int Bprime = n+1;
-									float X1 = upsampledpoints[0][Aprime];
-									float X2 = upsampledpoints[0][Bprime];
-									float Y1 = upsampledpoints[1][Aprime];
-									float Y2 = upsampledpoints[1][Bprime];
-									float slope= (Y2-Y1)/(X2-X1);
-									frac_time[c] = (vf - Y1) / slope + X1;
+								if (fabs(upsampledpoints[j][n]) <= vf) {
+									float Aprime = upsampledpoints[j][n];
+									float Bprime = upsampledpoints[j][n+1];
+									float XaPrime = n;
+									float Delta = time[c][j+1] - time[c][j];
+									frac_time[c] = time[c][j]+(XaPrime+(vf - Aprime)/(Bprime-Aprime))*Delta/N;
+									//printf("Upsampled point: %f,\nn = %d\n",upsampledpoints[j][n],n);
 								}
 							}
 					}
@@ -321,6 +330,7 @@ void pulsedt(const char *filename)
 	puts("100%\n");
 
 	gStyle->SetOptStat(0);
+	//gStyle->SetOptFit(0011);
 
 	TCanvas *c1 = new TCanvas("c1", "Channel 1 Waveforms");
 	c1->SetLogz(1);
@@ -360,6 +370,7 @@ void pulsedt(const char *filename)
 	hdt[0]->GetYaxis()->SetTitle("frequency");
 	hdt[0]->Draw();
 	for (int i=1; i<hdt.size(); i++) {
+		//hdt[i]->Fit("gaus");
 		hdt[i]->SetLineColor(i+1);
 		hdt[i]->Draw("same");
 	}
