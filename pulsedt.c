@@ -11,23 +11,30 @@ double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
 double pulsearea_max = 10;
 
 // Settings
-double cfd_frac = 0.5;// Fraction of height to measure to
+double cfd_frac = 0.3;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
 double repeat_thresh = 0.049; // When checking for clipping, signal must be > this threshold
 unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0	; // 0 is linear, 1 is cubic spline
-int smoothing = 0; // true to smooth
-
+int smoothing = 1; // true to smooth
+//SINC Filtering Settings and array declaration
+float N = 100;
+float T = 100;
+int L = 6;
+int StevesBool = 1; //Steven Edit - testing new methods
+double upsampledpoints[1024][100+1] = {{0}};
+double upsampledtimes[1024][100+1] = {{0}};
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
 unsigned int active_channels[] = { 2, 3};
 size_t nactive_channels = 2; // Length of the above array
+
 double sinc(double i){
-	float result;
+	double result;
 	if(i == 0){
 		result = 0;
 	}
@@ -36,6 +43,29 @@ double sinc(double i){
 	}
 	return result;
 }
+void upsampletime(double times[4][1024],int c, int idx,int N){
+	upsampledtimes[idx][0] = times[c][idx];
+	upsampledtimes[idx][N+1] = times[c][idx+1];
+	double dT = (times[c][idx]-times[c][idx-1])/N;
+	for (int p = 1;p <= int(N);p++){
+		upsampledtimes[idx][p] = upsampledtimes[idx][p-1]+dT;
+	}
+}
+void upsampledata(double waveform[4][1024],int c,int idx,int N, int L, int T){
+	upsampledpoints[idx][0] =waveform[c][idx];
+	upsampledpoints[idx][N+1] =waveform[c][idx+1];
+	for (int m = 1;m <= int(N);m++){
+		upsampledpoints[idx][m] = 0;
+		for (int p = 0;p <= L-1;p++){
+			double temp = (p*N+m);
+			double sinc1 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
+			temp = (p+1)*N-m;
+			double sinc2 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
+			upsampledpoints[idx][m] += waveform[c][idx-p]*sinc1 + waveform[c][idx+1+p]*sinc2;
+		}
+	}
+}
+
 void pulsedt(const char *filename)
 {
 	TFile *f = new TFile(filename);
@@ -155,12 +185,7 @@ void pulsedt(const char *filename)
 		int signal_good[4] = { 0, 0, 0, 0 };
 		// discard is logically boolean. Its value is the repeat channel + 1
 		int discard = 0;
-		int StevesBool = 1; //Steven Edit - testing new methods
-		float N = 8;
-		float T = 30;
-		int L = 6;
-		double upsampledpoints[1024][8] = {{0}};
-		double upsampledtimes[1024][8] = {{0}};
+
 		double prevval[4] = { -10000, -10000, -10000, -10000 };
 		unsigned int repeat[4] = { 0, 0, 0, 0 };
 
@@ -232,8 +257,18 @@ void pulsedt(const char *filename)
 			}
 		}
 
+
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
+			upsampledata( waveform,c,peak_idx[c],N, L, T);
+			upsampledata( waveform,c,peak_idx[c]-1,N, L, T);
+			for (int j=peak_idx[c]-1;j<=peak_idx[c];j++){
+				for(int m=0;m<int(N);m++){
+					if(fabs(upsampledpoints[j][m])>fabs(peak_val[c])){
+						peak_val[c] = fabs(upsampledpoints[j][m]);
+					}
+				}
+			}
 			hPulseHeight[c]->Fill(peak_val[c]);
 			// integrate the whole signal
 			// FIXME: There should be a smarter way to do this
@@ -253,7 +288,10 @@ void pulsedt(const char *filename)
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			double vf = peak_val[c] * cfd_frac;
-			for (int j=peak_idx[c]; j>peak_idx[c]-skip 	; j--) {
+
+			for (int j=peak_idx[c]; j>skip 	; j--) {
+				//printf("Peak value: %f, wvfm value: %f, j: %d\n",fabs(peak_val[c]),fabs(waveform[c][peak_idx[c]]),j);
+
 				if (fabs(waveform[c][j]) <= vf) {
 					if (StevesBool == 0) {
 						for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
@@ -275,32 +313,26 @@ void pulsedt(const char *filename)
 					}
 					//Start of SINC Upsampling
 					if (StevesBool==1){
-							upsampledpoints[j][0] = waveform[c][j];
-							upsampledtimes[j][0] = time[c][j];
-							double dT = (time[c][j+1]-time[c][j])/N;
-							for (int p = 1;p <=int(N);p++){
-								upsampledtimes[j][p] = upsampledtimes[j][p-1]+dT;
-							}
-							for (int m = 1;m < int(N);m++){
-								upsampledpoints[j][m] = 0;
-								for (int p = 0;p <= L-1;p++){
-									double temp = (p*N+m);
-									double sinc1 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
-									temp = (p+1)*N-m;
-									double sinc2 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
-									upsampledpoints[j][m] += waveform[c][j-p]*sinc1 + waveform[c][j+1+p]*sinc2;
-								}
-							}
-							for (int n=int(N); n >=0; n--) {
-								if (fabs(upsampledpoints[j][n]) <= vf) {
+						upsampledata(waveform,c,j,N, L, T);
+						upsampletime(time,c, j,N);
+							double t = -1000;
+							for (int n=int(N+1); n >=0; n--) {
+								//printf("Point: %f,vf: %f\n",fabs(upsampledpoints[j][n]),vf);
+								if (fabs(upsampledpoints[j][n]) < vf) {
 									float Aprime = upsampledpoints[j][n];
 									float Bprime = upsampledpoints[j][n+1];
 									float XaPrime = n;
 									float Delta = time[c][j+1] - time[c][j];
-									frac_time[c] = time[c][j]+(XaPrime+(vf - Aprime)/(Bprime-Aprime))*Delta/N;
-									//printf("Upsampled point: %f,\nn = %d\n",upsampledpoints[j][n],n);
+									t = time[c][j]+(XaPrime+(vf - Aprime)/(Bprime-Aprime))*Delta/N;
+									break;
 								}
 							}
+							if (t != -1000){
+								//printf("Time=%f\n",t);
+								frac_time[c] = t;
+								break;
+							}
+
 					}
 					if (j == skip) {
 						printf("WARNING: %d: Failed to find fraction (ch%d)\n", i, c+1);
@@ -404,7 +436,7 @@ void pulsedt(const char *filename)
 		}
 	}
 	hPulseArea[0]->SetLineColor(1);
-	hPulseArea[0]->SetMaximum(hpamax+hpamax*0.1f);
+	hPulseArea[0]->SetMaximum(hpamax+hpamax*10);
 	hPulseArea[0]->GetXaxis()->SetTitle("Area [Vns]");
 	hPulseArea[0]->GetYaxis()->SetTitle("frequency");
 	hPulseArea[0]->Draw();
