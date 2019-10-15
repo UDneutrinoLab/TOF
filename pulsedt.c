@@ -2,9 +2,13 @@
 #include <math.h>
 #include <stdio.h>
 #include <vector>
-
+#include "Kalman.h"
 #include "sgfilter.h"
-
+float q = .002;
+float r = .002;
+float P = .002;
+float K = 0;
+Kalman myFilter = Kalman(q,r,P,K);//(q,r,p,k) = (process noise variance,measurement noise variance,estimated error covariance,kalman gain)
 // Histogram parameters
 double hist_ylo[4] = { -0.5, -0.5, -0.5, -0.5 }; // Volts
 double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
@@ -16,21 +20,21 @@ int skip = 32; // Skip start and end of signal
 double repeat_thresh = 0.049; // When checking for clipping, signal must be > this threshold
 unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
-double signal_thresh[4] = { 0.01, 0.01, 0.01, 0.01 }; // Discard if whole signal < signal_thresh
+double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0	; // 0 is linear, 1 is cubic spline
-int smoothing = 1; // true to smooth
+int smoothingbool = 1; // true to smooth with a kalman filter
 //SINC Filtering Settings and array declaration
 float N = 100;
 float T = 80;
 int L = 6;
-int StevesBool = 0; //Steven Edit - testing new methods
+int FIRFilterBool = 1; //Steven Edit - testing new methods
 double upsampledpoints[1024][100] = {{0}};
 double upsampledtimes[1024][100] = {{0}};
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = { 2, 3};
+unsigned int active_channels[] = { 1, 2};
 size_t nactive_channels = 2; // Length of the above array
 
 double sinc(double i){
@@ -83,7 +87,7 @@ void pulsedt(const char *filename)
 	tree->SetBranchAddress("ch1time", &time[1][0]);
 	tree->SetBranchAddress("ch2time", &time[2][0]);
 	tree->SetBranchAddress("ch3time", &time[3][0]);
-
+	//TH2D *dtAmp = new TH2D("dtAmplitude", "dt vs. Amplitude", 1000, -1, 200, 512, hist_ylo[0], hist_yhi[0]);
 	TH2D *ch1waveforms = new TH2D("ch1waveforms", "Channel 1 Waveforms", 1024, -0.1, 200, 512, hist_ylo[0], hist_yhi[0]);
 	TH2D *ch2waveforms = new TH2D("ch2waveforms", "Channel 2 Waveforms", 1024, -0.1, 200, 512, hist_ylo[1], hist_yhi[1]);
 	TH2D *ch3waveforms = new TH2D("ch3waveforms", "Channel 3 Waveforms", 1024, -0.1, 200, 512, hist_ylo[2], hist_yhi[2]);
@@ -145,7 +149,7 @@ void pulsedt(const char *filename)
 			ss2 << "#Deltat_{" << c1-1 << c2-1 << "}";
 			//TH1D *h = new TH1D(&name[0], &name[0], 1024, 0, 200);
 			//TH1D *h = new TH1D(&name[0], &name[0], 2048, -60, 60);
-			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 2048, -60, 60);
+			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 1024, -1, 1);
 			hdt.push_back(h);
 
 			//printf("%d %d (%d %d) %s\n", i, j, c1, c2, name);
@@ -176,8 +180,13 @@ void pulsedt(const char *filename)
 		// filter
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
-			if (smoothing) {
-				SGSmoothing::Smooth(1024, &raw_waveform[c][0], &waveform[c][0], 5, 3);
+			if (smoothingbool) {
+				myFilter.setParameters(q,r,P);
+				//SGSmoothing::Smooth(1024, &raw_waveform[c][0], &waveform[c][0], 5, 3);
+				for (int j = 0;j<1024;j++){
+					waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
+				}
+
 			} else {
 				for (int j=0; j<1024; j++) { waveform[c][j] = raw_waveform[c][j]; }
 			}
@@ -294,7 +303,7 @@ void pulsedt(const char *filename)
 				//printf("Peak value: %f, wvfm value: %f, j: %d\n",fabs(peak_val[c]),fabs(waveform[c][peak_idx[c]]),j);
 
 				if (fabs(waveform[c][j]) <= vf) {
-					if (StevesBool == 0) {
+					if (FIRFilterBool == 0) {
 						for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
 							int idx = j + p;
 							double t = time[c][idx];
@@ -313,7 +322,7 @@ void pulsedt(const char *filename)
 						break;
 					}
 					//Start of SINC Upsampling
-					if (StevesBool==1){
+					if (FIRFilterBool==1){
 							upsampledata(waveform,c,j,N, L, T);
 							upsampletime(time,c, j,N);
 							double t = -1000;
@@ -325,13 +334,6 @@ void pulsedt(const char *filename)
 										double t = upsampledtimes[j][idx];
 										double v = fabs(upsampledpoints[j][idx]);
 										interp_graph->SetPoint(interp_pts_down+p, v, t);
-										//printf("%d,%d,%d,Point: %f,vf: %f\n",n,idx,p,fabs(upsampledpoints[j][idx]),vf);
-									//float Aprime = upsampledpoints[j][n];
-									//float Bprime = upsampledpoints[j][n+1];
-									//float XaPrime = n;
-									//float Delta = time[c][j+1] - time[c][j];
-									//t = time[c][j]+(XaPrime+(vf - Aprime)/(Bprime-Aprime))*Delta/N;
-									//break;
 									}
 
 									if (interp_type == 1) {
