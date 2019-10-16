@@ -64,7 +64,7 @@ typedef struct {
 	unsigned short minute;
 	unsigned short second;
 	unsigned short millisecond;
-	unsigned short reserved1;
+	unsigned short RC;
 	char           bs[2];
 	unsigned short board_serial_number;
 	char           tc[2];
@@ -265,7 +265,7 @@ DATAINFO output_dat(FILE *f, DATAINFO dat)
 
 		for (i=0; i<1024; i++) {
 			// convert data to volts
-			dat1.waveform[chn_index][i] = -1*(dat1.voltage[i] / 65536. - 0.5);
+			dat1.waveform[chn_index][i] = (dat1.voltage[i] / 65536. + (eh.RC/65535.- 0.5));
 
 			// calculate time for this cell
 			dat1.time[chn_index][i] = 0;
