@@ -144,9 +144,9 @@ void pulsedt(const char *filename)
 			unsigned int c1 = active_channels[i];
 			unsigned int c2 = active_channels[j];
 			std::stringstream ss1;
-			ss1 << "dt" << c1-1 << c2-1;
+			ss1 << "dt" << c1 << c2;
 			std::stringstream ss2;
-			ss2 << "#Deltat_{" << c1-1 << c2-1 << "}";
+			ss2 << "#Deltat_{" << c1 << c2 << "}";
 			//TH1D *h = new TH1D(&name[0], &name[0], 1024, 0, 200);
 			//TH1D *h = new TH1D(&name[0], &name[0], 2048, -60, 60);
 			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 1024, -1, 1);
