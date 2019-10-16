@@ -428,7 +428,10 @@ void pulsedt(const char *filename)
 			TGraph *hpulse1 = new TGraph(1024,time[0],waveform[0]);
 			TGraph *hpulse2 = new TGraph(1024,time[1],waveform[1]);
 			//TGraph *hpulse3 = new TGraph(1,time[1],waveform[1]);
-
+			TLine *line1 = new TLine(0,cfd_frac*peak_val[0],400,cfd_frac*peak_val[0]);
+			TLine *line2 = new TLine(0,cfd_frac*peak_val[1],400,cfd_frac*peak_val[1]);
+			TLine *line3 = new TLine(frac_time[0],-1,frac_time[0],1);
+			TLine *line4 = new TLine(frac_time[1],-1,frac_time[1],1);
 			// for (int idx=0; idx<1024; idx++) {
 			// 	hpulse1->Fill(time[0][idx], waveform[0][idx]);
 			// 	hpulse2->Fill(time[1][idx], waveform[1][idx]);
@@ -443,7 +446,14 @@ void pulsedt(const char *filename)
 	    hpulse2->SetMarkerStyle(21);
 	    hpulse2->SetLineColor(2);
 	    hpulse2->Draw("CP");
-
+			line1->Draw();
+			line2->Draw();
+			line2->SetLineColor(2);
+			line1->SetLineColor(4);
+			line3->Draw();
+			line4->Draw();
+			line3->SetLineColor(2);
+			line4->SetLineColor(4);
 			for (int i=0; i<1024; i++) {
 				ch1waveforms_right->Fill(i, waveform[0][i]);
 				ch2waveforms_right->Fill(i, waveform[1][i]);
