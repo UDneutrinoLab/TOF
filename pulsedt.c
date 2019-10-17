@@ -12,7 +12,9 @@ Kalman myFilter = Kalman(q,r,P,K);//(q,r,p,k) = (process noise variance,measurem
 // Histogram parameters
 double hist_ylo[4] = { -0.5, -0.5, -0.5, -0.5 }; // Volts
 double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
-double pulsearea_max = 10;
+double pulsearea_max = 700E9;
+double pulsearea_range = 300E9;
+
 
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
@@ -65,7 +67,7 @@ void pulsedt(const char *filename){
 	TH1D *ch4rise_time = new TH1D("ch4rise_time", "Channel 4 Rise Time", 1000, 0, 10);
 	TH1D *hrise_time[] = { ch1rise_time, ch2rise_time, ch3rise_time, ch4rise_time };
 
-	TH1I *hDPeakIndex = new TH1I("hDPeakIndex", "hDPeakIndex", 1025, -512, 512);
+	// /TH1I *hDPeakIndex = new TH1I("hDPeakIndex", "hDPeakIndex", 1025, -512, 512);
 
 	TH1D *hPulseHeight[4];
 	for (int i=0; i<4; i++) {
@@ -79,8 +81,8 @@ void pulsedt(const char *filename){
 	for (int i=0; i<4; i++) {
 		std::stringstream ssname, sslabel;
 		ssname << "hPulseArea_ch" << i+1;
-		sslabel << "Pulse Area (Channel " << i+1 << ")";
-		hPulseArea[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 50, 0, pulsearea_max);
+		sslabel << "Pulse Area (Channel " << i+1 << ") in unit pC";
+		hPulseArea[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 1000, pulsearea_max-pulsearea_range, pulsearea_max+pulsearea_range);
 	}
 
 	// Print settings
@@ -145,7 +147,7 @@ void pulsedt(const char *filename){
 	// filtered
 	double waveform[4][1024];
 
-	for (int i=0; i<nentries && !stop_doing_stuff; i++) {
+	for (int i=0; i<nentries; i++) {
 		if ((i % (nentries/10)) == 0) {
 			printf("%d%%\n", int(100.0*float(i)/float(nentries)));
 		}
@@ -225,12 +227,17 @@ void pulsedt(const char *filename){
 			continue;
 		}
 
+		// 	g->SetPoint(i, time, 1.0 + TMath::Sin(TMath::TwoPi() * i / 99.0));
+		//g->Draw("AF");
+		//std::cout << "g->Integral() = " << g->Integral() << std::endl;
+
 		// Find peak
 
 		double peak_val[4] = { -100, -100, -100, -100 };
+		double pulse_area[4] = { 0, 0, 0, 0 };
 		unsigned int peak_idx[4] = { 0, 0, 0, 0 };
 		double rise_time[4] = { 0, 0, 0, 0 };
-		//unsigned int p1_idx[4] = { 0, 0, 0, 0 };
+
 
 		double baseline[4];
 		for (int k=0; k<nactive_channels; k++) {
@@ -242,8 +249,6 @@ void pulsedt(const char *filename){
 			baseline[c] = baseline[c]/(3*skip);
 		}
 		for (int j=0+skip; j<1024-skip; j++) {
-			//ht12difference->Fill(j, time[0][j] - time[1][j]);
-			//hdtime12->Fill(time[0][j] - time[1][j]);
 			for (int k=0; k<nactive_channels; k++) {
 				unsigned int c = active_channels[k] - 1;
 				hwaveforms[c]->Fill(time[c][j], waveform[c][j]);
@@ -264,7 +269,18 @@ void pulsedt(const char *filename){
 			peak_val[c] = r->Value(0);
 			hPulseHeight[c]->Fill(peak_val[c]);
 		}
-
+		//find PulseArea
+		int area_range = 50;
+		for (int k=0; k<nactive_channels; k++) {
+			unsigned int c = active_channels[k] - 1;
+			TGraph *g = new TGraph(2*area_range+1);
+			for (int m = peak_idx[c]-area_range; m <= peak_idx[c]+area_range; m++){
+				g->SetPoint(m-(peak_idx[c]-area_range), time[c][m],waveform[c][m]);
+			}
+			pulse_area[c] = g->Integral(0,-1)/1E-12; //gives in unit pC -> scale by known capacitance of source
+			//printf("Pulse Area: %f (V-ns/pC)\n",pulse_area[c]);
+			hPulseArea[c]->Fill(pulse_area[c]);
+		}
 
 		double frac_time[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
 
@@ -279,7 +295,6 @@ void pulsedt(const char *filename){
 				//printf("Peak value: %f, wvfm value: %f, j: %d,c: %d\n",fabs(vf),fabs(waveform[c][j]),j,c);
 				if (fabs(waveform[c][j]) < vf) {
 					double t = -1000;
-					if (FIRFilterBool == 0) {
 						for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
 							int idx = j + p;
 							double t = time[c][idx];
@@ -301,40 +316,9 @@ void pulsedt(const char *filename){
 							//printf("y = %f*x+%f; t = %f\n",m,b,(vf-b)/m);
 						}
 						frac_time[c] = t;
-						break;
-					}
-					//Start of SINC Upsampling
-					if (FIRFilterBool==1){
-							//upsampledata(waveform,c,j,N, L, T);
-							//upsampletime(time,c,j,N);
-							for (int n=int(N-1); n >=0; n--) {
-            		if (fabs(upsampledpoints[j][n]) < vf) {
-									double t2;
-									double Y1 = fabs(upsampledpoints[j][n]);
-									double Y2 = fabs(upsampledpoints[j][n+1]);
-									double X1 = upsampledtimes[j][n];
-									double X2 = upsampledtimes[j][n+1];
-									double slope = (Y2 - Y1) / (X2 - X1);
-									t2 = (vf - Y1) / slope + X1;
-									Y1 = fabs(waveform[c][j-2]);
-									Y2 = fabs(waveform[c][j+2]);
-									X1 = time[c][j-2];
-									X2 = time[c][j+2];
-									slope = (Y2 - Y1) / (X2 - X1);
-									t = (vf - Y1) / slope + X1;
-									//printf("t: %f,t2: %f,pc: %f\n",t,t2,fabs((t - t2))/t);
-									if (t2 < time[c][j+1]&&t2 > time[c][j]){
-										t = t2;
-									}
-									frac_time[c] = t;
-
-									break;
-								}
-							}
-					}
-					if (t != -1000){
-						break;
-					}
+						if (t != -1000){
+							break;
+						}
 					if (j == skip) {
 						printf("WARNING: %d: Failed to find fraction (ch%d)\n", i, c+1);
 					}
@@ -442,7 +426,17 @@ void pulsedt(const char *filename){
 		hrise_time[i]->Draw("same");
 	}
 	cprt->BuildLegend();
-
+	TCanvas *cpa = new TCanvas("cph", "Pulse Rise Time");
+	hPulseArea[0]->SetLineColor(1);
+	hPulseArea[0]->SetMaximum(hphmax+hphmax*0.1f);
+	hPulseArea[0]->GetXaxis()->SetTitle("Cummulative Charge [v*ns/pC]");
+	hPulseArea[0]->GetYaxis()->SetTitle("frequency");
+	hPulseArea[0]->Draw();
+	for (int i=1; i<4; i++) {
+		hPulseArea[i]->SetLineColor(i+1);
+		hPulseArea[i]->Draw("same");
+	}
+	cpa->BuildLegend();
 	printf("Kept %lld/%lld events\n", (nentries-ndiscarded), nentries);
 
 	// XXX THIS IS BAD
