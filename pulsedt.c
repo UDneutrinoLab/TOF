@@ -19,8 +19,8 @@ double pulsearea_range = 300E9;
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
-double repeat_thresh = 0.1; // When checking for clipping, signal must be > this threshold
-unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
+double repeat_thresh = 0.495; // When checking for clipping, signal must be > this threshold
+unsigned int repeat_max = 2; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0; // 0 is linear, 1 is cubic spline
@@ -29,19 +29,18 @@ int smoothingbool = 1; // true to smooth with a kalman filter
 const float N = 8;
 float T = 30;
 int L = 10	;
-int FIRFilterBool = 0; //Steven Edit - testing new methods
-double upsampledpoints[1024][100] = {{0}};
-double upsampledtimes[1024][100] = {{0}};
+//int FIRFilterBool = 0; //Steven Edit - testing new methods
+//double upsampledpoints[1024][100] = {{0}};
+//double upsampledtimes[1024][100] = {{0}};
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = {2, 3};
-size_t nactive_channels = 2; // Length of the above array
+unsigned int active_channels[] = {1,2,3,4};
+size_t nactive_channels = 4; // Length of the above array
 
 void pulsedt(const char *filename){
 	TFile *f = new TFile(filename);
-
 	TTree *tree;
 	double raw_waveform[4][1024];
 	double time[4][1024];
@@ -74,7 +73,7 @@ void pulsedt(const char *filename){
 		std::stringstream ssname, sslabel;
 		ssname << "hPulseHeight_ch" << i+1;
 		sslabel << "Pulse Height (Channel " << i+1 << ")";
-		hPulseHeight[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 512, hist_ylo[i], hist_yhi[i]);
+			hPulseHeight[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 512, hist_ylo[i], hist_yhi[i]);
 	}
 
 	TH1D *hPulseArea[4];
@@ -124,7 +123,7 @@ void pulsedt(const char *filename){
 			ss2 << "#Deltat_{" << c1 << c2 << "}";
 			//TH1D *h = new TH1D(&name[0], &name[0], 1024, 0, 200);
 			//TH1D *h = new TH1D(&name[0], &name[0], 2048, -60, 60);
-			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 1024, -1, 1);
+			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 10000, -30, 30);
 			hdt.push_back(h);
 
 			//printf("%d %d (%d %d) %s\n", i, j, c1, c2, name);
@@ -161,7 +160,7 @@ void pulsedt(const char *filename){
 				myFilter.setParameters(q,r,P);
 				//SGSmoothing::Smooth(1024, &raw_waveform[c][0], &waveform[c][0], 5, 3);
 				for (int j = 0;j<1024;j++){
-					waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
+				 	waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
 				}
 
 			} else {
@@ -263,10 +262,11 @@ void pulsedt(const char *filename){
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			for (int m=-interp_pts_peak;m<=interp_pts_peak;m++){
-				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],waveform[c][peak_idx[c]+m]);
+				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],fabs(waveform[c][peak_idx[c]+m]));
 			}
-			TFitResultPtr r =interp_graphpeak->Fit("gaus","SQIF","ROB=.95");
-			peak_val[c] = r->Value(0);
+			TFitResultPtr r =interp_graphpeak->Fit("gaus","SQIF","ROB=.9");
+			if (peak_val[c]<0){peak_val[c] = -1*r->Value(0);}
+			else{peak_val[c] = r->Value(0);}
 			hPulseHeight[c]->Fill(peak_val[c]);
 		}
 		//find PulseArea
@@ -279,7 +279,7 @@ void pulsedt(const char *filename){
 			}
 			pulse_area[c] = g->Integral(0,-1)/1E-12; //gives in unit pC -> scale by known capacitance of source
 			//printf("Pulse Area: %f (V-ns/pC)\n",pulse_area[c]);
-			hPulseArea[c]->Fill(pulse_area[c]);
+			hPulseArea[c]->Fill(fabs(pulse_area[c]));
 		}
 
 		double frac_time[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
@@ -307,7 +307,7 @@ void pulsedt(const char *filename){
 							t=interp_graph->Eval(vf, 0, "S");
 
 						} else {
-							TFitResultPtr r =interp_graph->Fit("pol1","SQIF","ROB=.95");
+							TFitResultPtr r =interp_graph->Fit("pol1","SQIF","ROB=.9");
 							double b = r->Value(0);
 							double m = r->Value(1);
 							t = (vf-b)/m;
@@ -415,7 +415,7 @@ void pulsedt(const char *filename){
 		hPulseHeight[i]->Draw("same");
 	}
 	cph->BuildLegend();
-	TCanvas *cprt = new TCanvas("cph", "Pulse Rise Time");
+	TCanvas *cprt = new TCanvas("cprt", "Pulse Rise Time");
 	hrise_time[0]->SetLineColor(1);
 	hrise_time[0]->SetMaximum(hphmax+hphmax*0.1f);
 	hrise_time[0]->GetXaxis()->SetTitle("Rise Time [ns]");
