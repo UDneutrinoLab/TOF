@@ -19,90 +19,26 @@ double pulsearea_range = 300E9;
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
-double scaler = 1;
-double repeat_thresh = .495*scaler; // When checking for clipping, signal must be > this threshold
+double repeat_thresh = 0.495; // When checking for clipping, signal must be > this threshold
 unsigned int repeat_max = 2; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0; // 0 is linear, 1 is cubic spline
-int smoothingbool = 0; // true to smooth with a kalman filter
+int smoothingbool = 1; // true to smooth with a kalman filter
 //SINC Filtering Settings and array declaration
-const float N = 100;
-float T = 80;
+const float N = 8;
+float T = 30;
 int L = 10	;
-int FIRFilterBool = 1; //Steven Edit - testing new methods
-int ADCBool = 1;
-double upsampledpoints[1024][100] = {{0}};
-double upsampledtimes[1024][100] = {{0}};
+//int FIRFilterBool = 0; //Steven Edit - testing new methods
+//double upsampledpoints[1024][100] = {{0}};
+//double upsampledtimes[1024][100] = {{0}};
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = {1,2};
-size_t nactive_channels = 2; // Length of the above array
-double sinc(double i){
-	if(i ==0){
-		return 1;
-	} else {
-		return sin(i)/i;
-	}
-}
-void upsampletime(double times[4][1024],int c, int idx,int N){
-	upsampledtimes[idx][0] = times[c][idx];
-	//upsampledtimes[idx][N] = times[c][idx+1];
-	double dT = (times[c][idx]-times[c][idx-1])/double(N);
-	for (int p = 1;p < int(N);p++){
-		upsampledtimes[idx][p] = upsampledtimes[idx][p-1]+dT;
-	}
-}
-void upsampledata(double waveform[4][1024],int c,int idx,int N, int L, int T){
-	upsampledpoints[idx][0] =waveform[c][idx];
-	//upsampledpoints[idx][N] =waveform[c][idx+1];
-	for (int m = 1;m < int(N);m++){
-		upsampledpoints[idx][m] = 0;
-		for (int p = 0;p <= L-1;p++){
-			double temp = (p*N+m);
-			double sinc1 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
-			temp = (p+1)*N-m;
-			double sinc2 = sinc(temp*M_PI/N)*exp(-(temp/T)*(temp/T));
-			upsampledpoints[idx][m] += waveform[c][idx-p]*sinc1 + waveform[c][idx+1+p]*sinc2;
-			//printf("Test: %d,%d,%d,%f,%f,%f\n",m,p,idx,upsampledpoints[idx][m],waveform[c][idx-p]*sinc1,waveform[c][idx+1+p]*sinc2);
-		}
-		upsampledpoints[idx][m] = myFilter.getFilteredValue(upsampledpoints[idx][m]);
-	}
-}
-// double cross_corr(double waveform,double time){
-// 	double Rx[1024] = {0};
-// 	short order= 1024;
-// 	double sum1 = 0;
-// 	double sum2 = 0;
-// 	float mean1=0;
-// 	float mean2=0;
-// 	for (int m=0;m<order;m++) {
-// 		sum1+=waveform[0][m]*waveform[0][m];
-// 		sum2+=waveform[1][m]*waveform[1][m];
-// 	}
-// 	mean1 =sum1/1024;
-// 	mean2 =sum2/1024;
-// 	double delay_arr[1024] = {0};
-// 	float sum;
-// 	double maxsum = -10000;
-// 	double maxdelay = -10000;
-// 	double sumrx = 0;
-// 	for (int n = 0;n<order;n++) {
-// 		sumrx+=waveform[0][n]*waveform[1][n]/sqrt(sum1*sum2);
-// 		Rx[n]=waveform[0][n]*waveform[1][n]/sqrt(sum1*sum2);
-// 		delay_arr[n] = n;
-// 		if(Rx[n] > maxsum){
-// 				maxsum = Rx[n];
-// 				maxdelay = n;
-// 				printf("Peak Delay: %f\n",(n)*.2);
-// 				}
-// 	}
-// 	printf("Correlation: %f\n",sumrx);
-//
-// 	return Time[n];
-// }
+unsigned int active_channels[] = {1,2,3,4};
+size_t nactive_channels = 4; // Length of the above array
+
 void pulsedt(const char *filename){
 	TFile *f = new TFile(filename);
 	TTree *tree;
@@ -224,17 +160,10 @@ void pulsedt(const char *filename){
 				myFilter.setParameters(q,r,P);
 				//SGSmoothing::Smooth(1024, &raw_waveform[c][0], &waveform[c][0], 5, 3);
 				for (int j = 0;j<1024;j++){
-					if(ADCBool)
-				 		waveform[c][j] = (myFilter.getFilteredValue(raw_waveform[c][j]))*scaler;
-					else
-						waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
-					//test to visualize waveforms
-					}
+				 	waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
+				}
 
 			} else {
-				if(ADCBool)
-					for (int j=0; j<1024; j++) { waveform[c][j] = (raw_waveform[c][j])*scaler;}
-				else
 					for (int j=0; j<1024; j++) { waveform[c][j] = raw_waveform[c][j];}
 			}
 		}
@@ -361,6 +290,18 @@ void pulsedt(const char *filename){
 		int area_range = 50;
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
+			for (int m=-interp_pts_peak;m<=interp_pts_peak;m++){
+				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],fabs(waveform[c][peak_idx[c]+m]));
+			}
+			TFitResultPtr r =interp_graphpeak->Fit("gaus","SQIF","ROB=.9");
+			if (peak_val[c]<0){peak_val[c] = -1*r->Value(0);}
+			else{peak_val[c] = r->Value(0);}
+			hPulseHeight[c]->Fill(peak_val[c]);
+		}
+		//find PulseArea
+		int area_range = 50;
+		for (int k=0; k<nactive_channels; k++) {
+			unsigned int c = active_channels[k] - 1;
 			TGraph *g = new TGraph(2*area_range+1);
 			for (int m = peak_idx[c]-area_range; m <= peak_idx[c]+area_range; m++){
 				g->SetPoint(m-(peak_idx[c]-area_range), time[c][m],waveform[c][m]);
@@ -407,8 +348,6 @@ void pulsedt(const char *filename){
 						if (t != -1000){
 							break;
 						}
-					}
-
 					if (j == skip) {
 						printf("WARNING: %d: Failed to find fraction (ch%d)\n", i, c+1);
 					}
