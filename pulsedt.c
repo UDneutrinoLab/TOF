@@ -4,50 +4,48 @@
 #include <vector>
 #include "Kalman.h"
 #include "sgfilter.h"
-float q = .002;
-float r = .002;
-float P = .002;
+float q = 1;
+float r = .005;
+float P = 1;
 float K = 0;
 Kalman myFilter = Kalman(q,r,P,K);//(q,r,p,k) = (process noise variance,measurement noise variance,estimated error covariance,kalman gain)
 // Histogram parameters
 double hist_ylo[4] = { -0.5, -0.5, -0.5, -0.5 }; // Volts
 double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
-double pulsearea_max = 10;
+double pulsearea_max = 700E9;
+double pulsearea_range = 300E9;
+
 
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
-double repeat_thresh = 0.1; // When checking for clipping, signal must be > this threshold
-unsigned int repeat_max = 4; // Discard if (# repeated values) > repeat_max
+double scaler = 1;
+double repeat_thresh = .495*scaler; // When checking for clipping, signal must be > this threshold
+unsigned int repeat_max = 2; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
-int interp_type = 0	; // 0 is linear, 1 is cubic spline
+int interp_type = 0; // 0 is linear, 1 is cubic spline
 int smoothingbool = 0; // true to smooth with a kalman filter
 //SINC Filtering Settings and array declaration
 const float N = 100;
-float T = 40;
-int L = 6;
+float T = 80;
+int L = 10	;
 int FIRFilterBool = 1; //Steven Edit - testing new methods
+int ADCBool = 1;
 double upsampledpoints[1024][100] = {{0}};
 double upsampledtimes[1024][100] = {{0}};
 // Floating-point equality check
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = { 1, 2};
+unsigned int active_channels[] = {1,2};
 size_t nactive_channels = 2; // Length of the above array
-
-int stop_doing_stuff = 0;
-
 double sinc(double i){
-	double result;
-	if(i == 0){
-		result = 0;
+	if(i ==0){
+		return 1;
+	} else {
+		return sin(i)/i;
 	}
-	if(i!=0){
-		result = sin(i)/i;
-	}
-	return result;
 }
 void upsampletime(double times[4][1024],int c, int idx,int N){
 	upsampledtimes[idx][0] = times[c][idx];
@@ -70,13 +68,43 @@ void upsampledata(double waveform[4][1024],int c,int idx,int N, int L, int T){
 			upsampledpoints[idx][m] += waveform[c][idx-p]*sinc1 + waveform[c][idx+1+p]*sinc2;
 			//printf("Test: %d,%d,%d,%f,%f,%f\n",m,p,idx,upsampledpoints[idx][m],waveform[c][idx-p]*sinc1,waveform[c][idx+1+p]*sinc2);
 		}
+		upsampledpoints[idx][m] = myFilter.getFilteredValue(upsampledpoints[idx][m]);
 	}
 }
-
-void pulsedt(const char *filename)
-{
+// double cross_corr(double waveform,double time){
+// 	double Rx[1024] = {0};
+// 	short order= 1024;
+// 	double sum1 = 0;
+// 	double sum2 = 0;
+// 	float mean1=0;
+// 	float mean2=0;
+// 	for (int m=0;m<order;m++) {
+// 		sum1+=waveform[0][m]*waveform[0][m];
+// 		sum2+=waveform[1][m]*waveform[1][m];
+// 	}
+// 	mean1 =sum1/1024;
+// 	mean2 =sum2/1024;
+// 	double delay_arr[1024] = {0};
+// 	float sum;
+// 	double maxsum = -10000;
+// 	double maxdelay = -10000;
+// 	double sumrx = 0;
+// 	for (int n = 0;n<order;n++) {
+// 		sumrx+=waveform[0][n]*waveform[1][n]/sqrt(sum1*sum2);
+// 		Rx[n]=waveform[0][n]*waveform[1][n]/sqrt(sum1*sum2);
+// 		delay_arr[n] = n;
+// 		if(Rx[n] > maxsum){
+// 				maxsum = Rx[n];
+// 				maxdelay = n;
+// 				printf("Peak Delay: %f\n",(n)*.2);
+// 				}
+// 	}
+// 	printf("Correlation: %f\n",sumrx);
+//
+// 	return Time[n];
+// }
+void pulsedt(const char *filename){
 	TFile *f = new TFile(filename);
-
 	TTree *tree;
 	double raw_waveform[4][1024];
 	double time[4][1024];
@@ -96,36 +124,28 @@ void pulsedt(const char *filename)
 	TH2D *ch4waveforms = new TH2D("ch4waveforms", "Channel 4 Waveforms", 1024, -0.1, 200, 512, hist_ylo[3], hist_yhi[3]);
 	TH2D *hwaveforms[] = { ch1waveforms, ch2waveforms, ch3waveforms, ch4waveforms };
 
-	TH2D *ht12difference = new TH2D("t12difference", "Channnel 1 - Channel 2", 1024, 0, 1024, 512, -0.1, 0.1);
-	TH1D *hdtime12 = new TH1D("hdtime12", "Channel 1 - Channel 2 time difference", 512, -0.1, 0.1);
+	TH1D *ch1rise_time = new TH1D("ch1rise_time", "Channel 1 Rise Time", 1000, 0, 10);
+	TH1D *ch2rise_time = new TH1D("ch2rise_time", "Channel 2 Rise Time", 1000, 0, 10);
+	TH1D *ch3rise_time = new TH1D("ch3rise_time", "Channel 3 Rise Time", 1000, 0, 10);
+	TH1D *ch4rise_time = new TH1D("ch4rise_time", "Channel 4 Rise Time", 1000, 0, 10);
+	TH1D *hrise_time[] = { ch1rise_time, ch2rise_time, ch3rise_time, ch4rise_time };
 
-	TH2D *ch1waveforms_left = new TH2D("ch1waveforms_left", "Channel 1 Waveforms (left lobe)", 1024, 0, 1024, 512, hist_ylo[0], hist_yhi[0]);
-	TH2D *ch1waveforms_center = new TH2D("ch1waveforms_center", "Channel 1 Waveforms (center lobe)", 1024, 0, 1024, 512, hist_ylo[0], hist_yhi[0]);
-	TH2D *ch1waveforms_right = new TH2D("ch1waveforms_right", "Channel 1 Waveforms (right lobe)", 1024, 0, 1024, 512, hist_ylo[0], hist_yhi[0]);
-	TH2D *ch2waveforms_left = new TH2D("ch2waveforms_left", "Channel 2 Waveforms (left lobe)", 1024, 0, 1024, 512, hist_ylo[0], hist_yhi[0]);
-	TH2D *ch2waveforms_center = new TH2D("ch2waveforms_center", "Channel 2 Waveforms (center lobe)", 1024, 0, 1024, 512, hist_ylo[0], hist_yhi[0]);
-	TH2D *ch2waveforms_right = new TH2D("ch2waveforms_right", "Channel 2 Waveforms (right lobe)", 1024, 0, 1024, 512, hist_ylo[0], hist_yhi[0]);
-	TH2D *dtda = new TH2D("dtda", "Delta Amplitude vs dt", 512, -.005, .005, 512,-.6,.6);
-
-	//TH1D *hch1peak = new TH1D("hch1peak", "hch1peak", 1024, -0.1, 200);
-	//TH1D *hch2peak = new TH1D("hch2peak", "hch2peak", 1024, -0.1, 200);
-
-	TH1I *hDPeakIndex = new TH1I("hDPeakIndex", "hDPeakIndex", 1025, -512, 512);
+	// /TH1I *hDPeakIndex = new TH1I("hDPeakIndex", "hDPeakIndex", 1025, -512, 512);
 
 	TH1D *hPulseHeight[4];
 	for (int i=0; i<4; i++) {
 		std::stringstream ssname, sslabel;
 		ssname << "hPulseHeight_ch" << i+1;
 		sslabel << "Pulse Height (Channel " << i+1 << ")";
-		hPulseHeight[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 512, hist_ylo[i], hist_yhi[i]);
+			hPulseHeight[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 512, hist_ylo[i], hist_yhi[i]);
 	}
 
 	TH1D *hPulseArea[4];
 	for (int i=0; i<4; i++) {
 		std::stringstream ssname, sslabel;
 		ssname << "hPulseArea_ch" << i+1;
-		sslabel << "Pulse Area (Channel " << i+1 << ")";
-		hPulseArea[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 50, 0, pulsearea_max);
+		sslabel << "Pulse Area (Channel " << i+1 << ") in unit pC";
+		hPulseArea[i] = new TH1D(ssname.str().c_str(), sslabel.str().c_str(), 1000, pulsearea_max-pulsearea_range, pulsearea_max+pulsearea_range);
 	}
 
 	// Print settings
@@ -167,7 +187,7 @@ void pulsedt(const char *filename)
 			ss2 << "#Deltat_{" << c1 << c2 << "}";
 			//TH1D *h = new TH1D(&name[0], &name[0], 1024, 0, 200);
 			//TH1D *h = new TH1D(&name[0], &name[0], 2048, -60, 60);
-			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 1024, -1, 1);
+			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 10000, -30, 30);
 			hdt.push_back(h);
 
 			//printf("%d %d (%d %d) %s\n", i, j, c1, c2, name);
@@ -180,15 +200,17 @@ void pulsedt(const char *filename)
 	printf("Processing %lld entries\n", nentries);
 
 	// For interpolating to find the constant-fraction time
-	int interp_pts_up = 2; // # points above the principle point
-	int interp_pts_down = 2; // # points below the principle point
+	int interp_pts_up = 5; // # points above the principle point
+	int interp_pts_down = 5; // # points below the principle point
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
+	int interp_pts_peak = 6;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
+	TGraph *interp_graphpeak = new TGraph(2*interp_pts_peak+1);
 
 	// filtered
 	double waveform[4][1024];
 
-	for (int i=0; i<nentries && !stop_doing_stuff; i++) {
+	for (int i=0; i<nentries; i++) {
 		if ((i % (nentries/10)) == 0) {
 			printf("%d%%\n", int(100.0*float(i)/float(nentries)));
 		}
@@ -202,13 +224,22 @@ void pulsedt(const char *filename)
 				myFilter.setParameters(q,r,P);
 				//SGSmoothing::Smooth(1024, &raw_waveform[c][0], &waveform[c][0], 5, 3);
 				for (int j = 0;j<1024;j++){
-					waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
-				}
+					if(ADCBool)
+				 		waveform[c][j] = (myFilter.getFilteredValue(raw_waveform[c][j]))*scaler;
+					else
+						waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
+					//test to visualize waveforms
+					}
 
 			} else {
-				for (int j=0; j<1024; j++) { waveform[c][j] = raw_waveform[c][j]; }
+				if(ADCBool)
+					for (int j=0; j<1024; j++) { waveform[c][j] = (raw_waveform[c][j])*scaler;}
+				else
+					for (int j=0; j<1024; j++) { waveform[c][j] = raw_waveform[c][j];}
 			}
 		}
+
+
 
 		int signal_good[4] = { 0, 0, 0, 0 };
 		// discard is logically boolean. Its value is the repeat channel + 1
@@ -268,64 +299,76 @@ void pulsedt(const char *filename)
 			continue;
 		}
 
+		// 	g->SetPoint(i, time, 1.0 + TMath::Sin(TMath::TwoPi() * i / 99.0));
+		//g->Draw("AF");
+		//std::cout << "g->Integral() = " << g->Integral() << std::endl;
+
 		// Find peak
 
 		double peak_val[4] = { -100, -100, -100, -100 };
+		double pulse_area[4] = { 0, 0, 0, 0 };
 		unsigned int peak_idx[4] = { 0, 0, 0, 0 };
+		double rise_time[4] = { 0, 0, 0, 0 };
+
+
 		double baseline[4];
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
+
 			baseline[c] = 0;
-			for (int j = skip;j<=3*skip;j++){
+			for (int j = skip;j<=4*skip;j++){
 				baseline[c]+=waveform[c][j];
 			}
-			baseline[c] = baseline[c]/(2*skip);
+			baseline[c] = baseline[c]/(3*skip);
 		}
 		for (int j=0+skip; j<1024-skip; j++) {
-			ht12difference->Fill(j, time[0][j] - time[1][j]);
-			hdtime12->Fill(time[0][j] - time[1][j]);
 			for (int k=0; k<nactive_channels; k++) {
 				unsigned int c = active_channels[k] - 1;
 				hwaveforms[c]->Fill(time[c][j], waveform[c][j]);
 				double w = fabs(waveform[c][j]-baseline[c]);
-				//double w2 = fabs(waveform[c][j+1]-baseline[c]);
-				//double w3 = fabs(waveform[c][j-1]-baseline[c]);
 				if (w > peak_val[c]) {
-
 					peak_val[c] = w;
 					peak_idx[c] = j;
 				}
 			}
 		}
 
+
+		for (int k=0; k<nactive_channels; k++) {
+		unsigned int c = active_channels[k] - 1;
+		// 	upsampledata( waveform,c,peak_idx[c]-2,N, L, T);
+		// 	upsampledata( waveform,c,peak_idx[c],N, L, T);
+		// 	upsampledata( waveform,c,peak_idx[c]-1,N, L, T);
+		// 	upsampledata( waveform,c,peak_idx[c]+1,N, L, T);
+		// 	upsampledata( waveform,c,peak_idx[c]+2,N, L, T);
+		// 	for (int j=peak_idx[c]-2;j<=peak_idx[c]+2;j++){
+		// 		for(int m=0;m<int(N);m++){
+		// 			if(fabs(upsampledpoints[j][m]-baseline[c])>fabs(peak_val[c])){
+		// 				peak_val[c] = (fabs(upsampledpoints[j][m]-baseline[c]));
+		// 			}
+		// 		}
+		// 	}
+			for (int m=-interp_pts_peak;m<=interp_pts_peak;m++){
+				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],fabs(waveform[c][peak_idx[c]+m]));
+			}
+			TFitResultPtr r =interp_graphpeak->Fit("gaus","SQIF","ROB=.9");
+			if (peak_val[c]<0){peak_val[c] = -1*r->Value(0);}
+			else{peak_val[c] = r->Value(0);}
+			//printf("Peak value: %f\n",peak_val[c]);
+			hPulseHeight[c]->Fill(peak_val[c]/scaler);
+		}
+		//find PulseArea
+		int area_range = 50;
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
-			upsampledata( waveform,c,peak_idx[c]-2,N, L, T);
-			upsampledata( waveform,c,peak_idx[c],N, L, T);
-			upsampledata( waveform,c,peak_idx[c]-1,N, L, T);
-			upsampledata( waveform,c,peak_idx[c]+1,N, L, T);
-			upsampledata( waveform,c,peak_idx[c]+2,N, L, T);
-			for (int j=peak_idx[c]-2;j<=peak_idx[c]+2;j++){
-				for(int m=0;m<int(N);m++){
-					if(fabs(upsampledpoints[j][m]-baseline[c])>fabs(peak_val[c])){
-						peak_val[c] = fabs(upsampledpoints[j][m]-baseline[c]);
-					}
-				}
+			TGraph *g = new TGraph(2*area_range+1);
+			for (int m = peak_idx[c]-area_range; m <= peak_idx[c]+area_range; m++){
+				g->SetPoint(m-(peak_idx[c]-area_range), time[c][m],waveform[c][m]);
 			}
-			hPulseHeight[c]->Fill(peak_val[c]);
-
-			// integrate the whole signal
-			// FIXME: There should be a smarter way to do this
-			//TGraph g(1024-2*skip, time[c], waveform[c]);
-
-			//std::stringstream ss;
-			//ss << "waveform_area_func_event" << i << "_channel" << c+1;
-			//TF1 f(ss.str().c_str(), [&](double *x, double *){ return g.Eval(x[0]); }, time[c][skip], time[c][1024-skip], 0);
-
-			//hPulseArea[c]->Fill(f.Integral(time[c][skip], time[c][1024-skip], 1e-3));
+			pulse_area[c] = g->Integral(0,-1)/1E-12; //gives in unit pC -> scale by known capacitance of source
+			//printf("Pulse Area: %f (V-ns/pC)\n",pulse_area[c]);
+			hPulseArea[c]->Fill(fabs(pulse_area[c]));
 		}
-
-		hDPeakIndex->Fill(peak_idx[1] - peak_idx[0]);
 
 		double frac_time[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
 
@@ -334,75 +377,44 @@ void pulsedt(const char *filename)
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			double vf = baseline[c]+(peak_val[c]-baseline[c]) * cfd_frac;
-
-			for (int j=peak_idx[c] +	1; j>skip 	; j--) {
-				//printf("Peak value: %f, wvfm value: %f, j: %d\n",fabs(peak_val[c]),fabs(waveform[c][peak_idx[c]]),j);
-
+			double vf9 = baseline[c]+(peak_val[c]-baseline[c]) * .8;
+			double vf1 = baseline[c]+(peak_val[c]-baseline[c]) * .2;
+			for (int j=peak_idx[c]; j>skip 	; j--) {
+				//printf("Peak value: %f, wvfm value: %f, j: %d,c: %d\n",fabs(vf),fabs(waveform[c][j]),j,c);
 				if (fabs(waveform[c][j]) < vf) {
-					if (FIRFilterBool == 0) {
+					double t = -1000;
 						for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
 							int idx = j + p;
 							double t = time[c][idx];
 							double v = fabs(waveform[c][idx]);
 							// swap x and y because we can't eval on y
-							interp_graph->SetPoint(interp_pts_down+p, v, t);
+							interp_graph->SetPoint(interp_pts_down+p, t, v);
 							}
-						double t = -1000;
+
 						if (interp_type == 1) {
-							t = interp_graph->Eval(vf, 0, "S");
+							t=interp_graph->Eval(vf, 0, "S");
+
 						} else {
-							t = interp_graph->Eval(vf);
+							TFitResultPtr r =interp_graph->Fit("pol1","SQIF","ROB=.9");
+							double b = r->Value(0);
+							double m = r->Value(1);
+							t = (vf-b)/m;
+							rise_time[c] = (vf9-b)/m - (vf1-b)/m;
+							hrise_time[c]->Fill(rise_time[c]);
+							//printf("y = %f*x+%f; t = %f\n",m,b,(vf-b)/m);
 						}
-
 						frac_time[c] = t;
-						break;
+						if (t != -1000){
+							break;
+						}
 					}
-					//Start of SINC Upsampling
-					if (FIRFilterBool==1){
-							upsampledata(waveform,c,j,N, L, T);
-							upsampletime(time,c, j,N);
-							double t = -1000;
-							for (int n=int(N-1); n >=0; n--) {
-								//printf("Point: %f,vf: %f\n",fabs(upsampledpoints[j][n]),vf);
-								if (fabs(upsampledpoints[j][n]) < vf) {
-									double Y1 = fabs(upsampledpoints[j][n]);
-									double Y2 = fabs(upsampledpoints[j][n+1]);
-									double X1 = upsampledtimes[j][n];
-									double X2 = upsampledtimes[j][n+1];
-									double slope = (Y2 - Y1) / (X2 - X1);
-									t = (vf - Y1) / slope + X1;
-									// for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
-									// 	int idx = n + p;
-									// 	double t = upsampledtimes[j][idx];
-									// 	double v = fabs(upsampledpoints[j][idx]);
-									// 	interp_graph->SetPoint(interp_pts_down+p, v, t);
-									// }
-									//
-									// if (interp_type == 1) {
-									// 	t = interp_graph->Eval(vf, 0, "S");
-									// } else {
-									// 	t = interp_graph->Eval(vf);
-									// }
-									frac_time[c] = t;
-									//printf("Time=%f\n",t);
-									break;
-								}
-							}
-							if (t != -1000){
-								//printf("Time=%f\n",t);
-								//frac_time[c] = t;
-								break;
-							}
 
-					}
 					if (j == skip) {
 						printf("WARNING: %d: Failed to find fraction (ch%d)\n", i, c+1);
 					}
 				}
 			}
-		}
-
-		// delta t
+					// delta t
 
 		std::vector<double> dt;
 		for (int j=0; j<nactive_channels; j++) {
@@ -410,9 +422,9 @@ void pulsedt(const char *filename)
 				unsigned int c1 = active_channels[j] - 1;
 				unsigned int c2 = active_channels[k] - 1;
 				double t = (frac_time[c1] - frac_time[c2]);
-				double da = (baseline[c1] - baseline[c2]);
-				dtda->Fill(da,t);
-				printf("%d chs. %d and %d t1=%f t2=%f dt=%f\n", i, c1+1, c2+1, frac_time[c1], frac_time[c2], t);
+				//double da = (baseline[c1] - baseline[c2]);
+				//dtda->Fill(da,t);
+				//printf("%d chs. %d and %d t1=%f t2=%f dt=%f\n", i, c1+1, c2+1, frac_time[c1], frac_time[c2], t);
 				if (floateq(t, 0)) {
 					//printf("%d dt%d%d = 0\n", i, c1+1, c2+1);
 				}
@@ -422,60 +434,8 @@ void pulsedt(const char *filename)
 		for (int j=0; j<dt.size(); j++) {
 			hdt[j]->Fill(dt[j]);
 		}
-
-		double deltat = frac_time[1] - frac_time[0];
-		if (deltat > 0.4) {
-			TGraph *hpulse1 = new TGraph(1024,time[0],waveform[0]);
-			TGraph *hpulse2 = new TGraph(1024,time[1],waveform[1]);
-			//TGraph *hpulse3 = new TGraph(1,time[1],waveform[1]);
-			TLine *line1 = new TLine(0,cfd_frac*peak_val[0],400,cfd_frac*peak_val[0]);
-			TLine *line2 = new TLine(0,cfd_frac*peak_val[1],400,cfd_frac*peak_val[1]);
-			TLine *line3 = new TLine(frac_time[0],-1,frac_time[0],1);
-			TLine *line4 = new TLine(frac_time[1],-1,frac_time[1],1);
-			// for (int idx=0; idx<1024; idx++) {
-			// 	hpulse1->Fill(time[0][idx], waveform[0][idx]);
-			// 	hpulse2->Fill(time[1][idx], waveform[1][idx]);
-			// }
-			printf("%d tf1=%f tf2=%f tp1=%f tp2=%f dt=%f\n", i, frac_time[0], frac_time[1], peak_val[0], peak_val[1], deltat);
-			stop_doing_stuff = 1;
-			TCanvas *c = new TCanvas("c", "c");
-			hpulse1->Draw("AC*");
-			hpulse1->SetLineColor(4);
-			///hpulse2->SetLineColor(1);
-			hpulse2->SetLineWidth(3);
-	    hpulse2->SetMarkerStyle(21);
-	    hpulse2->SetLineColor(2);
-	    hpulse2->Draw("CP");
-			line1->Draw();
-			line2->Draw();
-			line2->SetLineColor(2);
-			line1->SetLineColor(4);
-			line3->Draw();
-			line4->Draw();
-			line3->SetLineColor(2);
-			line4->SetLineColor(4);
-			for (int i=0; i<1024; i++) {
-				ch1waveforms_right->Fill(i, waveform[0][i]);
-				ch2waveforms_right->Fill(i, waveform[1][i]);
-			}
-		} else if (deltat < -0.4) {
-			for (int i=0; i<1024; i++) {
-				ch1waveforms_left->Fill(i, waveform[0][i]);
-				ch2waveforms_left->Fill(i, waveform[1][i]);
-			}
-		} else {
-			for (int i=0; i<1024; i++) {
-				ch1waveforms_center->Fill(i, waveform[0][i]);
-				ch2waveforms_center->Fill(i, waveform[1][i]);
-			}
-		}
 	}
 	puts("100%\n");
-
-	if (stop_doing_stuff) {
-
-		return;
-	}
 
 	gStyle->SetOptStat(0);
 	//gStyle->SetOptFit(0011);
@@ -503,18 +463,6 @@ void pulsedt(const char *filename)
 	ch4waveforms->GetXaxis()->SetTitle("time [ns]");
 	ch4waveforms->GetYaxis()->SetTitle("voltage [V]");
 	ch4waveforms->Draw("COLZ");
-
-	TCanvas *cdiff = new TCanvas("cdiff", "Channel 1 - Channel 2");
-	ht12difference->GetXaxis()->SetTitle("time [ns]");
-	ht12difference->GetYaxis()->SetTitle("#Deltat");
-	ht12difference->Draw("COLZ");
-
-	TCanvas *cdiff2 = new TCanvas("cdiff2", "Channel 1 - Channel 2");
-	hdtime12->Draw();
-	TCanvas *cdtda = new TCanvas("cdtda", "dt v da");
-	dtda->GetXaxis()->SetTitle("#DeltaAmplitude");
-	dtda->GetYaxis()->SetTitle("#Deltat");
-	dtda->Draw("COLZ");
 
 	TCanvas *cdt = new TCanvas("cdt", "dt Between Channels");
 
@@ -555,38 +503,21 @@ void pulsedt(const char *filename)
 		hPulseHeight[i]->Draw("same");
 	}
 	cph->BuildLegend();
-
-	TCanvas *c1l = new TCanvas("c1l", "Channel 1 Waveforms (left lobe)");
-	c1l->SetLogz(1);
-	ch1waveforms_left->GetXaxis()->SetTitle("index");
-	ch1waveforms_left->GetYaxis()->SetTitle("voltage [V]");
-	ch1waveforms_left->Draw("COLZ");
-	TCanvas *c1c = new TCanvas("c1c", "Channel 1 Waveforms (center lobe)");
-	c1c->SetLogz(1);
-	ch1waveforms_center->GetXaxis()->SetTitle("index");
-	ch1waveforms_center->GetYaxis()->SetTitle("voltage [V]");
-	ch1waveforms_center->Draw("COLZ");
-	TCanvas *c1r = new TCanvas("c1r", "Channel 1 Waveforms (left lobe)");
-	c1r->SetLogz(1);
-	ch1waveforms_right->GetXaxis()->SetTitle("index");
-	ch1waveforms_right->GetYaxis()->SetTitle("voltage [V]");
-	ch1waveforms_right->Draw("COLZ");
-
-	TCanvas *cdpi = new TCanvas("cdpi", "cdpi");
-	hDPeakIndex->Draw();
-
-	/*
-	TCanvas *cpa = new TCanvas("cpa", "Pulse Area");
-	double hpamax = 0;
-	for (int i=0; i<4; i++) {
-		double m = hPulseArea[i]->GetMaximum();
-		if (m > hpamax) {
-			hpamax = m;
-		}
+	TCanvas *cprt = new TCanvas("cprt", "Pulse Rise Time");
+	hrise_time[0]->SetLineColor(1);
+	hrise_time[0]->SetMaximum(hphmax+hphmax*0.1f);
+	hrise_time[0]->GetXaxis()->SetTitle("Rise Time [ns]");
+	hrise_time[0]->GetYaxis()->SetTitle("frequency");
+	hrise_time[0]->Draw();
+	for (int i=1; i<4; i++) {
+		hrise_time[i]->SetLineColor(i+1);
+		hrise_time[i]->Draw("same");
 	}
+	cprt->BuildLegend();
+	TCanvas *cpa = new TCanvas("cpa", "Pulse Rise Time");
 	hPulseArea[0]->SetLineColor(1);
-	hPulseArea[0]->SetMaximum(hpamax+hpamax*10);
-	hPulseArea[0]->GetXaxis()->SetTitle("Area [Vns]");
+	hPulseArea[0]->SetMaximum(hphmax+hphmax*0.1f);
+	hPulseArea[0]->GetXaxis()->SetTitle("Cummulative Charge [v*ns/pC]");
 	hPulseArea[0]->GetYaxis()->SetTitle("frequency");
 	hPulseArea[0]->Draw();
 	for (int i=1; i<4; i++) {
@@ -594,8 +525,6 @@ void pulsedt(const char *filename)
 		hPulseArea[i]->Draw("same");
 	}
 	cpa->BuildLegend();
-	*/
-
 	printf("Kept %lld/%lld events\n", (nentries-ndiscarded), nentries);
 
 	// XXX THIS IS BAD
