@@ -36,8 +36,8 @@ int L = 10	;
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = {1,2,3,4};
-size_t nactive_channels = 4; // Length of the above array
+unsigned int active_channels[] = {1,2};
+size_t nactive_channels = 2; // Length of the above array
 
 void pulsedt(const char *filename){
 	TFile *f = new TFile(filename);
@@ -65,7 +65,6 @@ void pulsedt(const char *filename){
 	TH1D *ch3rise_time = new TH1D("ch3rise_time", "Channel 3 Rise Time", 1000, 0, 10);
 	TH1D *ch4rise_time = new TH1D("ch4rise_time", "Channel 4 Rise Time", 1000, 0, 10);
 	TH1D *hrise_time[] = { ch1rise_time, ch2rise_time, ch3rise_time, ch4rise_time };
-
 	// /TH1I *hDPeakIndex = new TH1I("hDPeakIndex", "hDPeakIndex", 1025, -512, 512);
 
 	TH1D *hPulseHeight[4];
@@ -284,7 +283,7 @@ void pulsedt(const char *filename){
 			if (peak_val[c]<0){peak_val[c] = -1*r->Value(0);}
 			else{peak_val[c] = r->Value(0);}
 			//printf("Peak value: %f\n",peak_val[c]);
-			hPulseHeight[c]->Fill(peak_val[c]/scaler);
+			hPulseHeight[c]->Fill(peak_val[c]);
 		}
 		//find PulseArea
 		int area_range = 50;
@@ -299,7 +298,6 @@ void pulsedt(const char *filename){
 			hPulseHeight[c]->Fill(peak_val[c]);
 		}
 		//find PulseArea
-		int area_range = 50;
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			TGraph *g = new TGraph(2*area_range+1);
@@ -353,6 +351,7 @@ void pulsedt(const char *filename){
 					}
 				}
 			}
+		}
 					// delta t
 
 		std::vector<double> dt;
