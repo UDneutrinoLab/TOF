@@ -1,5 +1,6 @@
 #include <TROOT.h>
 #include <math.h>
+
 #include <stdio.h>
 #include <vector>
 #include "Kalman.h"
@@ -15,7 +16,6 @@ double hist_yhi[4] = { 0.5, 0.5, 0.5, 0.5 }; // Volts
 double pulsearea_max = 700E9;
 double pulsearea_range = 300E9;
 
-
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
@@ -26,9 +26,7 @@ double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signa
 int interp_type = 0; // 0 is linear, 1 is cubic spline
 int smoothingbool = 1; // true to smooth with a kalman filter
 //SINC Filtering Settings and array declaration
-const float N = 8;
-float T = 30;
-int L = 10	;
+
 //int FIRFilterBool = 0; //Steven Edit - testing new methods
 //double upsampledpoints[1024][100] = {{0}};
 //double upsampledtimes[1024][100] = {{0}};
@@ -39,6 +37,32 @@ const double epsilon = 0.001;
 unsigned int active_channels[] = {1,2};
 size_t nactive_channels = 2; // Length of the above array
 
+void print_graph(double t[1024], double wave[1024],float amp,int center){
+		//printf("t: %f,y: %f",t,wave);
+		//for (int m = 0;m<1024;m++){printf("t: %f,y: %f",t[m],wave[m]);}}
+		double delay = t[center]-4;
+		for (int m = 0;m<1024;m++){
+			t[m] = t[m]-delay;
+			printf("t: %f\n",t[m]);
+		}
+		TGraph *printed_graph = new TGraph(1024,t,wave);
+		TF1 *func = new TF1("f1","[0] * exp(-(x - [1]) / [2]) * (1 - exp(-(x - [1]) / [3]))");
+		func->SetParameter(0,amp);
+		func->SetParName(0,"Amplitude");
+		func->SetParameter(1,0);
+		func->SetParName(1,"Delay");
+		func->SetParameter(2,2.3);
+		func->SetParName(2,"Fall Time");
+		func->SetParameter(3,1.2);
+		func->SetParName(3,"Rise Time");
+		printed_graph->Draw("AC*");
+		printed_graph->Fit("f1","r");
+		func->Draw("same");
+		return;
+}
+// double double_exp_fit(double t,double *par){
+// 		return par[0] * exp(-(t - par[1]) / par[2]) * (1 - exp(-(t - par[1]) / par[3]));
+// }
 void pulsedt(const char *filename){
 	TFile *f = new TFile(filename);
 	TTree *tree;
@@ -65,6 +89,7 @@ void pulsedt(const char *filename){
 	TH1D *ch3rise_time = new TH1D("ch3rise_time", "Channel 3 Rise Time", 1000, 0, 10);
 	TH1D *ch4rise_time = new TH1D("ch4rise_time", "Channel 4 Rise Time", 1000, 0, 10);
 	TH1D *hrise_time[] = { ch1rise_time, ch2rise_time, ch3rise_time, ch4rise_time };
+
 	// /TH1I *hDPeakIndex = new TH1I("hDPeakIndex", "hDPeakIndex", 1025, -512, 512);
 
 	TH1D *hPulseHeight[4];
@@ -135,8 +160,8 @@ void pulsedt(const char *filename){
 	printf("Processing %lld entries\n", nentries);
 
 	// For interpolating to find the constant-fraction time
-	int interp_pts_up = 5; // # points above the principle point
-	int interp_pts_down = 5; // # points below the principle point
+	int interp_pts_up = 9; // # points above the principle point
+	int interp_pts_down = 9; // # points below the principle point
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
 	int interp_pts_peak = 6;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
@@ -262,8 +287,8 @@ void pulsedt(const char *filename){
 		}
 
 
-		for (int k=0; k<nactive_channels; k++) {
-		unsigned int c = active_channels[k] - 1;
+		//for (int k=0; k<nactive_channels; k++) {
+		//unsigned int c = active_channels[k] - 1;
 		// 	upsampledata( waveform,c,peak_idx[c]-2,N, L, T);
 		// 	upsampledata( waveform,c,peak_idx[c],N, L, T);
 		// 	upsampledata( waveform,c,peak_idx[c]-1,N, L, T);
@@ -276,16 +301,8 @@ void pulsedt(const char *filename){
 		// 			}
 		// 		}
 		// 	}
-			for (int m=-interp_pts_peak;m<=interp_pts_peak;m++){
-				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],fabs(waveform[c][peak_idx[c]+m]));
-			}
-			TFitResultPtr r =interp_graphpeak->Fit("gaus","SQIF","ROB=.9");
-			if (peak_val[c]<0){peak_val[c] = -1*r->Value(0);}
-			else{peak_val[c] = r->Value(0);}
-			//printf("Peak value: %f\n",peak_val[c]);
-			hPulseHeight[c]->Fill(peak_val[c]);
-		}
-		//find PulseArea
+
+		//find Pulse Height
 		int area_range = 50;
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
@@ -309,9 +326,9 @@ void pulsedt(const char *filename){
 			hPulseArea[c]->Fill(fabs(pulse_area[c]));
 		}
 
-		double frac_time[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
 
 		// Interpolate to find base
+		double frac_time[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
 
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
@@ -327,18 +344,17 @@ void pulsedt(const char *filename){
 							double t = time[c][idx];
 							double v = fabs(waveform[c][idx]);
 							// swap x and y because we can't eval on y
-							interp_graph->SetPoint(interp_pts_down+p, t, v);
+							interp_graph->SetPoint(interp_pts_down+p, t, v); //To solve for "Zeros" later
 							}
 
 						if (interp_type == 1) {
 							t=interp_graph->Eval(vf, 0, "S");
 
 						} else {
-							TFitResultPtr r =interp_graph->Fit("pol1","SQIF","ROB=.9");
-							double b = r->Value(0);
-							double m = r->Value(1);
-							t = (vf-b)/m;
-							rise_time[c] = (vf9-b)/m - (vf1-b)/m;
+							TF1 *r = new TF1("f1","pol3");
+							interp_graph->Fit("f1","SQIF","ROB=.9");
+							t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
+							rise_time[c] = r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
 							hrise_time[c]->Fill(rise_time[c]);
 							//printf("y = %f*x+%f; t = %f\n",m,b,(vf-b)/m);
 						}
@@ -360,6 +376,10 @@ void pulsedt(const char *filename){
 				unsigned int c1 = active_channels[j] - 1;
 				unsigned int c2 = active_channels[k] - 1;
 				double t = (frac_time[c1] - frac_time[c2]);
+				//TGraph *printed_graph = new TGraph(1024,time[c1],waveform[c1]);
+				//printed_graph->Draw("AC*");
+				//print_graph(time[c1],waveform[c1],peak_val[c1],peak_idx[c1]);
+				//return;
 				//double da = (baseline[c1] - baseline[c2]);
 				//dtda->Fill(da,t);
 				//printf("%d chs. %d and %d t1=%f t2=%f dt=%f\n", i, c1+1, c2+1, frac_time[c1], frac_time[c2], t);
@@ -419,6 +439,8 @@ void pulsedt(const char *filename){
 	for (int i=1; i<hdt.size(); i++) {
 		//hdt[i]->Fit("gaus");
 		hdt[i]->SetLineColor(i+1);
+		//hdt[i]->Fit("gaus","V","ROB=.9");
+		//printf("**********************Delta T Distribution %d**********************",i);
 		hdt[i]->Draw("same");
 	}
 	*cdt->BuildLegend();
@@ -450,6 +472,7 @@ void pulsedt(const char *filename){
 	for (int i=1; i<4; i++) {
 		hrise_time[i]->SetLineColor(i+1);
 		hrise_time[i]->Draw("same");
+		//hPulseArea[i]->Fit("gaus","V");
 	}
 	cprt->BuildLegend();
 	TCanvas *cpa = new TCanvas("cpa", "Pulse Rise Time");
@@ -461,6 +484,7 @@ void pulsedt(const char *filename){
 	for (int i=1; i<4; i++) {
 		hPulseArea[i]->SetLineColor(i+1);
 		hPulseArea[i]->Draw("same");
+		//hPulseArea[i]->Fit("gaus","V");
 	}
 	cpa->BuildLegend();
 	printf("Kept %lld/%lld events\n", (nentries-ndiscarded), nentries);
