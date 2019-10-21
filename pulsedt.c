@@ -34,7 +34,7 @@ int smoothingbool = 1; // true to smooth with a kalman filter
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = {1,2};
+unsigned int active_channels[] = {2,3};
 size_t nactive_channels = 2; // Length of the above array
 
 void print_graph(double t[1024], double wave[1024]){
@@ -305,7 +305,7 @@ void pulsedt(const char *filename){
 			double_t chi3 = r3->GetChisquare();
 			interp_graphpeak->Fit("g5","Q","ROB=.9");
 			double_t chi5 = r5->GetChisquare();
-			if(chi1==0||chi3==0||chi5==0){continue;}
+			//if(chi1==0||chi3==0||chi5==0){continue;}
 			// /printf("chi11: %e,chi3: %e,chi5: %e\n",chi1,chi3,chi5);
 			//printf("prob1: %f,prob3: %f,prob5: %f\n",prob1,prob3,prob5);
 			double v= 0;
