@@ -5,10 +5,10 @@
 #include <vector>
 #include "Kalman.h"
 #include "sgfilter.h"
-float q = 1;
+float q = .005;
 float r = .005;
-float P = 1;
-float K = 0;
+float P = .05;
+float K = .5;
 Kalman myFilter = Kalman(q,r,P,K);//(q,r,p,k) = (process noise variance,measurement noise variance,estimated error covariance,kalman gain)
 // Histogram parameters
 double hist_ylo[4] = { -0.5, -0.5, -0.5, -0.5 }; // Volts
@@ -34,7 +34,7 @@ int smoothingbool = 1; // true to smooth with a kalman filter
 const double epsilon = 0.001;
 #define floateq(A,B) (fabs(A-B) < epsilon)
 
-unsigned int active_channels[] = {2,3};
+unsigned int active_channels[] = {1,2};
 size_t nactive_channels = 2; // Length of the above array
 
 void print_graph(double t[1024], double wave[1024]){
@@ -132,7 +132,7 @@ void pulsedt(const char *filename){
 			ss2 << "#Deltat_{" << c1 << c2 << "}";
 			//TH1D *h = new TH1D(&name[0], &name[0], 1024, 0, 200);
 			//TH1D *h = new TH1D(&name[0], &name[0], 2048, -60, 60);
-			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 10000, -30, 30);
+			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 10000, -1, 1);
 			hdt.push_back(h);
 			//printf("%d %d (%d %d) %s\n", i, j, c1, c2, name);
 		}
@@ -144,12 +144,13 @@ void pulsedt(const char *filename){
 	printf("Processing %lld entries\n", nentries);
 
 	// For interpolating to find the constant-fraction time
-	int interp_pts_up = 10; // # points above the principle point
-	int interp_pts_down = 10; // # points below the principle point
+	int interp_pts_up = 2; // # points above the principle point
+	int interp_pts_down = 2; // # points below the principle point
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
-	int interp_pts_peak = 20;
+	int interp_pts_peak = 2;
+	interp_pts_peak = 2*interp_pts_peak+1;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
-	TGraph *interp_graphpeak = new TGraph(2*interp_pts_peak+1);
+	TGraph *interp_graphpeak = new TGraph(interp_pts_peak);
 
 	// filtered
 	double waveform[4][1024];
@@ -295,29 +296,29 @@ void pulsedt(const char *filename){
 			}
 			TF1 *r1 = new TF1("g1","gaus");
 			//r1->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
-			TF1 *r3 = new TF1("g3","gausn");
+			//TF1 *r3 = new TF1("g3","gausn");
 			//r3->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
 			TF1 *r5 = new TF1("g5","pol4");
 			//r5->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
-			interp_graphpeak->Fit("g1","Q","ROB=.9");
+			interp_graphpeak->Fit("g1","Q");
 			double_t chi1 = r1->GetChisquare();
-			interp_graphpeak->Fit("g3","Q","ROB=.9");
-			double_t chi3 = r3->GetChisquare();
-			interp_graphpeak->Fit("g5","Q","ROB=.9");
+			//interp_graphpeak->Fit("g3","Q","ROB=.9");
+			//double_t chi3 = r3->GetChisquare();
+			interp_graphpeak->Fit("g5","Q");
 			double_t chi5 = r5->GetChisquare();
 			//if(chi1==0||chi3==0||chi5==0){continue;}
 			// /printf("chi11: %e,chi3: %e,chi5: %e\n",chi1,chi3,chi5);
 			//printf("prob1: %f,prob3: %f,prob5: %f\n",prob1,prob3,prob5);
 			double v= 0;
-			if (chi1<=chi3&&chi1<=chi5){
+		  if (chi1<=chi5){
 				if (peak_val[c]<0){peak_val[c] = -1*r1->GetParameter(0);}
 				else{peak_val[c] = r1->GetParameter(0);}
 			}
-			if (chi3<=chi1&&chi3<=chi5){
-				if (peak_val[c]<0){peak_val[c] = -1*r3->GetParameter(0);}
-				else{peak_val[c] = r3->GetParameter(0);}
-			}
-			if (chi5<=chi1&&chi5<=chi3){
+			// if (chi3<=chi1&&chi3<=chi5){
+			// 	if (peak_val[c]<0){peak_val[c] = -1*r3->GetParameter(0);}
+			// 	else{peak_val[c] = r3->GetParameter(0);}
+			// }
+			if (chi5<=chi1){
 				v = r5->GetMaximum(time[c][peak_idx[c]-interp_pts_down],time[c][peak_idx[c]+interp_pts_up], 1.E-10, 100);
 				if (peak_val[c]<0){peak_val[c] = -1*v;}
 				else{peak_val[c] =v;}
@@ -365,19 +366,19 @@ void pulsedt(const char *filename){
 							t=interp_graph->Eval(vf, 0, "S");
 
 						} else {
-							TF1 *r;
-							TF1 *r1 = new TF1("f1","pol1");
-							TF1 *r3 = new TF1("f3","pol3");
-							TF1 *r5 = new TF1("f5","pol5");
-							interp_graph->Fit("f1","SQIF","ROB=.9");
-							interp_graph->Fit("f3","SQIF","ROB=.9");
-							interp_graph->Fit("f5","SQIF","ROB=.9");
-							double chi1 = r1->GetChisquare();
-							double chi3 = r3->GetChisquare();
-							double chi5 = r5->GetChisquare();
-							if (chi1<=chi3&&chi1<=chi5){r = r1;}
-							if (chi3<=chi1&&chi3<=chi5){r = r3;}
-							if (chi5<=chi1&&chi5<=chi3){r = r5;}
+							//TF1 *r;
+							TF1 *r = new TF1("f1","pol1");
+							//TF1 *r3 = new TF1("f3","pol3");
+							//TF1 *r5 = new TF1("f5","pol5");
+							interp_graph->Fit("f1","SQIF");
+							//interp_graph->Fit("f3","SQIF","ROB=.9");
+							//interp_graph->Fit("f5","SQIF","ROB=.9");
+							//double chi1 = r1->GetChisquare();
+							//double chi3 = r3->GetChisquare();
+							//double chi5 = r5->GetChisquare();
+							// if (chi1<=chi3){r = r1;}
+							// if (chi3<=chi1){r = r3;}
+							//if (chi5<=chi1&&chi5<=chi3){r = r5;}
 							t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
 							rise_time[c] = r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
 							hrise_time[c]->Fill(rise_time[c]);
@@ -401,10 +402,10 @@ void pulsedt(const char *filename){
 				unsigned int c1 = active_channels[j] - 1;
 				unsigned int c2 = active_channels[k] - 1;
 				double t = (frac_time[c1] - frac_time[c2]);
-				// if (fabs(t)>.2){
-				// 	print_graph(time[c1], waveform[c1]);
-				// 	return;
-				// }
+				if (fabs(t)<.075){
+				print_graph(time[c1], waveform[c1]);
+				return;
+				}
 				//TGraph *printed_graph = new TGraph(1024,time[c1],waveform[c1]);
 				//printed_graph->Draw("AC*");
 				//print_graph(time[c1],waveform[c1],peak_val[c1],peak_idx[c1]);
