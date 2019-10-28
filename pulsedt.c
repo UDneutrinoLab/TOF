@@ -7,7 +7,7 @@
 #include "sgfilter.h"
 float q = .005;
 float r = .005;
-float P = .05;
+float P = .005;
 float K = .5;
 Kalman myFilter = Kalman(q,r,P,K);//(q,r,p,k) = (process noise variance,measurement noise variance,estimated error covariance,kalman gain)
 // Histogram parameters
@@ -68,6 +68,29 @@ void pulsedt(const char *filename){
 	TH2D *ch3waveforms = new TH2D("ch3waveforms", "Channel 3 Waveforms", 1024, -0.1, 200, 512, hist_ylo[2], hist_yhi[2]);
 	TH2D *ch4waveforms = new TH2D("ch4waveforms", "Channel 4 Waveforms", 1024, -0.1, 200, 512, hist_ylo[3], hist_yhi[3]);
 	TH2D *hwaveforms[] = { ch1waveforms, ch2waveforms, ch3waveforms, ch4waveforms };
+
+	TH2D *ch1error = new TH2D("ch1error", "Channel 1 Filter Error", 1024, -0.1, 200, 1024, -.01, .01);
+	TH2D *ch2error = new TH2D("ch2error", "Channel 2 Filter Error", 1024, -0.1, 200, 1024, -.1, .1);
+	TH2D *ch3error = new TH2D("ch3error", "Channel 3 Filter Error", 1024, -0.1, 200, 1024, -.1, .1);
+	TH2D *ch4error = new TH2D("ch4error", "Channel 4 Filter Error", 1024, -0.1, 200, 1024, -.1, .1);
+	TH2D *herrors[] = { ch1error, ch2error, ch3error, ch4error };
+
+	TH2D *ch1pcov = new TH2D("ch1pcov", "Channel 1 Filter Covariance", 1024, -0.1, 200, 1024, -.1, .1);
+	TH2D *ch2pcov = new TH2D("ch2pcov", "Channel 2 Filter Covariance", 1024, -0.1, 200, 1024, -.01, .01);
+	TH2D *ch3pcov = new TH2D("ch3pcov", "Channel 3 Filter Covariance", 1024, -0.1, 200, 1024, -.01, .01);
+	TH2D *ch4pcov = new TH2D("ch4pcov", "Channel 4 Filter Covariance", 1024, -0.1, 200, 1024, -.01, .01);
+	TH2D *hpcovs[] = { ch1pcov, ch2pcov, ch3pcov, ch4pcov };
+
+	TH1D *ch1SNR = new TH1D("ch1SNR", "Channel 1 SNR", 100, 0, 60);
+	TH1D *ch2SNR = new TH1D("ch2SNR", "Channel 2 SNR", 100, 0, 60);
+	TH1D *ch3SNR = new TH1D("ch3SNR", "Channel 3 SNR", 100, 0, 60);
+	TH1D *ch4SNR = new TH1D("ch4SNR", "Channel 4 SNR", 100, 0, 60);
+	TH1D *hSNR[] = { ch1SNR, ch2SNR, ch3SNR, ch4SNR };
+
+	TH2D *chSNRvdt = new TH2D("chSNRvdt", "dt vs. SNR", 1000, -1, 1, 1000, 0, 60);
+
+
+
 
 	TH1D *ch1rise_time = new TH1D("ch1rise_time", "Channel 1 Rise Time", 1000, 0, 10);
 	TH1D *ch2rise_time = new TH1D("ch2rise_time", "Channel 2 Rise Time", 1000, 0, 10);
@@ -147,14 +170,14 @@ void pulsedt(const char *filename){
 	int interp_pts_up = 2; // # points above the principle point
 	int interp_pts_down = 2; // # points below the principle point
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
-	int interp_pts_peak = 2;
-	interp_pts_peak = 2*interp_pts_peak+1;
+	int interp_pts_peak = 5;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
 	TGraph *interp_graphpeak = new TGraph(interp_pts_peak);
 
 	// filtered
 	double waveform[4][1024];
-
+	double covar[4][1024];
+	double error[4][1024];
 	for (int i=0; i<nentries; i++) {
 		if ((i % (nentries/10)) == 0) {
 			printf("%d%%\n", int(100.0*float(i)/float(nentries)));
@@ -170,6 +193,10 @@ void pulsedt(const char *filename){
 				//SGSmoothing::Smooth(1024, &raw_waveform[c][0], &waveform[c][0], 5, 3);
 				for (int j = 0;j<1024;j++){
 				 	waveform[c][j] = myFilter.getFilteredValue(raw_waveform[c][j]);
+					error[c][j] = raw_waveform[c][j]-waveform[c][j];
+					covar[c][j] = myFilter.getEstimatedError();
+					herrors[c]->Fill(j,error[c][j]);
+					hpcovs[c]->Fill(j,covar[c][j]);
 				}
 
 			} else {
@@ -250,6 +277,7 @@ void pulsedt(const char *filename){
 
 
 		double baseline[4];
+		double variance[4];
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 
@@ -258,6 +286,12 @@ void pulsedt(const char *filename){
 				baseline[c]+=waveform[c][j];
 			}
 			baseline[c] = baseline[c]/(3*skip);
+			variance[c] = 0;
+			for (int j = skip;j<=4*skip;j++){
+				variance[c]+=(waveform[c][j]-baseline[c])*(waveform[c][j]-baseline[c]);
+			}
+			variance[c] /=(3*skip);
+			variance[c] = sqrt(variance[c]);
 		}
 		for (int j=0+skip; j<1024-skip; j++) {
 			for (int k=0; k<nactive_channels; k++) {
@@ -270,7 +304,17 @@ void pulsedt(const char *filename){
 				}
 			}
 		}
-
+		for (int j=0+skip; j<1024-skip; j++) {
+			for (int k=0; k<nactive_channels; k++) {
+				unsigned int c = active_channels[k] - 1;
+				hwaveforms[c]->Fill(time[c][j], waveform[c][j]);
+				double w = fabs(waveform[c][j]-baseline[c]);
+				if (w > peak_val[c]) {
+					peak_val[c] = w;
+					peak_idx[c] = j;
+				}
+			}
+		}
 
 		//for (int k=0; k<nactive_channels; k++) {
 		//unsigned int c = active_channels[k] - 1;
@@ -294,42 +338,53 @@ void pulsedt(const char *filename){
 			for (int m=-interp_pts_peak;m<=interp_pts_peak;m++){
 				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],fabs(waveform[c][peak_idx[c]+m]));
 			}
-			TF1 *r1 = new TF1("g1","gaus");
-			//r1->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
-			//TF1 *r3 = new TF1("g3","gausn");
-			//r3->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
-			TF1 *r5 = new TF1("g5","pol4");
-			//r5->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
-			interp_graphpeak->Fit("g1","Q");
-			double_t chi1 = r1->GetChisquare();
-			//interp_graphpeak->Fit("g3","Q","ROB=.9");
-			//double_t chi3 = r3->GetChisquare();
-			interp_graphpeak->Fit("g5","Q");
-			double_t chi5 = r5->GetChisquare();
-			//if(chi1==0||chi3==0||chi5==0){continue;}
-			// /printf("chi11: %e,chi3: %e,chi5: %e\n",chi1,chi3,chi5);
-			//printf("prob1: %f,prob3: %f,prob5: %f\n",prob1,prob3,prob5);
-			double v= 0;
-		  if (chi1<=chi5){
-				if (peak_val[c]<0){peak_val[c] = -1*r1->GetParameter(0);}
-				else{peak_val[c] = r1->GetParameter(0);}
+			//TGraph *grin, *grout;
+			//TGraphSmooth *gs = new TGraphSmooth("supsmu");
+			TSpline3 *s = new TSpline3("grs",interp_graphpeak);
+			double xarr[10000],yarr[10000];
+			xarr[0] = time[c][peak_idx[c]-2];
+			for (int m = 1;m<10000;m++){
+				xarr[m] = xarr[m-1]+.2/1000;
 			}
+			for(int m=0; m<1000; m++) {
+				yarr[m] = s->Eval(xarr[m]);
+				if(fabs(yarr[m])>fabs(peak_val[c])){peak_val[c]=yarr[m];}
+			}
+
+			// TF1 *r1 = new TF1("g1","gaus");
+			// //r1->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
+			// TF1 *r3 = new TF1("g3","gausn");
+			// //r3->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
+			// TF1 *r5 = new TF1("g5","pol4");
+			// //r5->SetRange(time[c][peak_idx[c]-interp_pts_peak],time[c][peak_idx[c]+interp_pts_peak]);
+			// grout->Fit("g1","Q");
+			// double_t chi1 = r1->GetChisquare();
+			// grout->Fit("g3","Q");
+			// double_t chi3 = r3->GetChisquare();
+			// grout->Fit("g5","Q");
+			// double_t chi5 = r5->GetChisquare();
+			// double v= 0;
+
+			// if (chi1<=chi3&&chi1<=chi5){
+			// 	if (peak_val[c]<0){peak_val[c] = -1*r1->GetParameter(0);}
+			// 	else{peak_val[c] = r1->GetParameter(0);}
+			// }
 			// if (chi3<=chi1&&chi3<=chi5){
 			// 	if (peak_val[c]<0){peak_val[c] = -1*r3->GetParameter(0);}
 			// 	else{peak_val[c] = r3->GetParameter(0);}
 			// }
-			if (chi5<=chi1){
-				v = r5->GetMaximum(time[c][peak_idx[c]-interp_pts_down],time[c][peak_idx[c]+interp_pts_up], 1.E-10, 100);
-				if (peak_val[c]<0){peak_val[c] = -1*v;}
-				else{peak_val[c] =v;}
-			}
-			//TFitResultPtr r =interp_graphpeak->Fit("gaus","SQIF","ROB=.9");
-			//interp_graphpeak->Draw("AC*");
-			//return
-
+			// if (chi5<=chi1&&chi5<=chi3){
+			// 	v = r5->GetMaximum(time[c][peak_idx[c]-interp_pts_down],time[c][peak_idx[c]+interp_pts_up], 1.E-10, 100);
+			// 	if (peak_val[c]<0){peak_val[c] = -1*v;}
+			// 	else{peak_val[c] =v;}
+			// }
+			// grout->Draw();
+			// interp_graphpeak->Draw("same");
+			// return;
+			hSNR[c]->Fill(10*log10((peak_val[c]*peak_val[c])/(variance[c]*variance[c])));
 			hPulseHeight[c]->Fill(peak_val[c]);
 		}
-		//find PulseArea
+		//find PulseArea, Pulse Height and Rise Time
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			TGraph *g = new TGraph(2*area_range+1);
@@ -339,6 +394,7 @@ void pulsedt(const char *filename){
 			pulse_area[c] = g->Integral(0,-1)/1E-12; //gives in unit pC -> scale by known capacitance of source
 			//printf("Pulse Area: %f (V-ns/pC)\n",pulse_area[c]);
 			hPulseArea[c]->Fill(fabs(pulse_area[c]));
+
 		}
 
 
@@ -366,19 +422,20 @@ void pulsedt(const char *filename){
 							t=interp_graph->Eval(vf, 0, "S");
 
 						} else {
-							//TF1 *r;
-							TF1 *r = new TF1("f1","pol1");
-							//TF1 *r3 = new TF1("f3","pol3");
-							//TF1 *r5 = new TF1("f5","pol5");
-							interp_graph->Fit("f1","SQIF");
-							//interp_graph->Fit("f3","SQIF","ROB=.9");
-							//interp_graph->Fit("f5","SQIF","ROB=.9");
-							//double chi1 = r1->GetChisquare();
-							//double chi3 = r3->GetChisquare();
-							//double chi5 = r5->GetChisquare();
-							// if (chi1<=chi3){r = r1;}
-							// if (chi3<=chi1){r = r3;}
-							//if (chi5<=chi1&&chi5<=chi3){r = r5;}
+
+							TF1 *r;
+							TF1 *r1 = new TF1("f1","pol1");
+							TF1 *r3 = new TF1("f3","pol4");
+							TF1 *r5 = new TF1("f5","pol5");
+							interp_graph->Fit("f1","SQIF","ROB=.9");
+							interp_graph->Fit("f3","SQIF","ROB=.9");
+							interp_graph->Fit("f5","SQIF","ROB=.9");
+							double chi1 = r1->GetChisquare();
+							double chi3 = r3->GetChisquare();
+							double chi5 = r5->GetChisquare();
+							if (chi1<=chi3&&chi1<=chi5){r = r1;}
+							if (chi3<=chi1&&chi3<=chi5){r = r3;}
+							if (chi5<=chi1&&chi5<=chi3){r = r5;}
 							t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
 							rise_time[c] = r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
 							hrise_time[c]->Fill(rise_time[c]);
@@ -397,15 +454,17 @@ void pulsedt(const char *filename){
 					// delta t
 
 		std::vector<double> dt;
+		std::vector<double> meanSNR;
 		for (int j=0; j<nactive_channels; j++) {
 			for (int k=j+1; k<nactive_channels; k++) {
 				unsigned int c1 = active_channels[j] - 1;
 				unsigned int c2 = active_channels[k] - 1;
 				double t = (frac_time[c1] - frac_time[c2]);
-				if (fabs(t)<.075){
-				print_graph(time[c1], waveform[c1]);
-				return;
-				}
+				meanSNR.push_back((10*log10((peak_val[c1]*peak_val[c1])/(variance[c1]*variance[c1]))+10*log10((peak_val[c2]*peak_val[c2])/(variance[c2]*variance[c2])))/2);
+				// if (fabs(t)>.2){
+				// 	print_graph(time[c1], waveform[c1]);
+				// 	return;
+				// }
 				//TGraph *printed_graph = new TGraph(1024,time[c1],waveform[c1]);
 				//printed_graph->Draw("AC*");
 				//print_graph(time[c1],waveform[c1],peak_val[c1],peak_idx[c1]);
@@ -421,6 +480,7 @@ void pulsedt(const char *filename){
 		}
 		for (int j=0; j<dt.size(); j++) {
 			hdt[j]->Fill(dt[j]);
+			chSNRvdt->Fill(dt[j],meanSNR[j]);
 		}
 	}
 	puts("100%\n");
@@ -433,6 +493,19 @@ void pulsedt(const char *filename){
 	ch1waveforms->GetXaxis()->SetTitle("time [ns]");
 	ch1waveforms->GetYaxis()->SetTitle("voltage [V]");
 	ch1waveforms->Draw("COLZ");
+
+	TCanvas *ce1 = new TCanvas("ce1", "Channel 1 Error");
+	ce1->SetLogz(1);
+	ch1error->GetXaxis()->SetTitle("time [ns]");
+	ch1error->GetYaxis()->SetTitle("Error [V]");
+	ch1error->Draw("COLZ");
+
+	TCanvas *cp1 = new TCanvas("cp1", "Channel 1 Covariance");
+	cp1->SetLogz(1);
+	ch1pcov->GetXaxis()->SetTitle("time [ns]");
+	ch1pcov->GetYaxis()->SetTitle("Covariance");
+	ch1pcov->Draw("COLZ");
+
 
 	TCanvas *c2 = new TCanvas("c2", "Channel 2 Waveforms");
 	c2->SetLogz(1);
@@ -493,9 +566,14 @@ void pulsedt(const char *filename){
 		hPulseHeight[i]->Draw("same");
 	}
 	cph->BuildLegend();
+	TCanvas *csnrvdt = new TCanvas("csnrvdt", "SNR vs. dt");
+	chSNRvdt->SetLineColor(1);
+	chSNRvdt->GetXaxis()->SetTitle("dt [ns]");
+	chSNRvdt->GetYaxis()->SetTitle("SNR (dB)");
+	chSNRvdt->Draw();
+
 	TCanvas *cprt = new TCanvas("cprt", "Pulse Rise Time");
 	hrise_time[0]->SetLineColor(1);
-	hrise_time[0]->SetMaximum(hphmax+hphmax*0.1f);
 	hrise_time[0]->GetXaxis()->SetTitle("Rise Time [ns]");
 	hrise_time[0]->GetYaxis()->SetTitle("frequency");
 	hrise_time[0]->Draw();
@@ -505,9 +583,22 @@ void pulsedt(const char *filename){
 		//hPulseArea[i]->Fit("gaus","V");
 	}
 	cprt->BuildLegend();
+
+	TCanvas *csnr = new TCanvas("csnr", "Pulse SNR");
+	hSNR[0]->SetLineColor(1);
+	hSNR[0]->GetXaxis()->SetTitle("SNR [dB]");
+	hSNR[0]->GetYaxis()->SetTitle("frequency");
+	hSNR[0]->Draw();
+	for (int i=1; i<4; i++) {
+		hSNR[i]->SetLineColor(i+1);
+		hSNR[i]->Draw("same");
+		//hPulseArea[i]->Fit("gaus","V");
+	}
+	csnr->BuildLegend();
+
+
 	TCanvas *cpa = new TCanvas("cpa", "Pulse Rise Time");
 	hPulseArea[0]->SetLineColor(1);
-	hPulseArea[0]->SetMaximum(hphmax+hphmax*0.1f);
 	hPulseArea[0]->GetXaxis()->SetTitle("Cummulative Charge [v*ns/pC]");
 	hPulseArea[0]->GetYaxis()->SetTitle("frequency");
 	hPulseArea[0]->Draw();
