@@ -1,13 +1,13 @@
 #include <TROOT.h>
 #include <math.h>
-
+#include <Math/Interpolator.h>
 #include <stdio.h>
 #include <vector>
 #include "Kalman.h"
 #include "sgfilter.h"
 float q = .005;
 float r = .005;
-float P = .005;
+float P = .05;
 float K = .5;
 Kalman myFilter = Kalman(q,r,P,K);//(q,r,p,k) = (process noise variance,measurement noise variance,estimated error covariance,kalman gain)
 // Histogram parameters
@@ -20,11 +20,11 @@ double pulsearea_range = 300E9;
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
 double repeat_thresh = 0.495; // When checking for clipping, signal must be > this threshold
-unsigned int repeat_max = 2; // Discard if (# repeated values) > repeat_max
+unsigned int repeat_max = 0; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0; // 0 is linear, 1 is cubic spline
-int smoothingbool = 1; // true to smooth with a kalman filter
+int smoothingbool = 0; // true to smooth with a kalman filter
 //SINC Filtering Settings and array declaration
 
 //int FIRFilterBool = 0; //Steven Edit - testing new methods
@@ -41,7 +41,7 @@ void print_graph(double t[1024], double wave[1024]){
 		//printf("t: %f,y: %f",t,wave);
 		//for (int m = 0;m<1024;m++){printf("t: %f,y: %f",t[m],wave[m]);}}
 		TGraph *printed_graph = new TGraph(1024,t,wave);
-		for (int i=0;i<1024;i++){printed_graph->SetPoint(i,fabs(t[i]),fabs(wave[i]));}
+		for (int i=0;i<1024;i++){printed_graph->SetPoint(i,t[i],wave[i]);}
 		printed_graph->Draw("AC*");
 		return;
 }
@@ -81,16 +81,13 @@ void pulsedt(const char *filename){
 	TH2D *ch4pcov = new TH2D("ch4pcov", "Channel 4 Filter Covariance", 1024, -0.1, 200, 1024, -.01, .01);
 	TH2D *hpcovs[] = { ch1pcov, ch2pcov, ch3pcov, ch4pcov };
 
-	TH1D *ch1SNR = new TH1D("ch1SNR", "Channel 1 SNR", 100, 0, 60);
-	TH1D *ch2SNR = new TH1D("ch2SNR", "Channel 2 SNR", 100, 0, 60);
-	TH1D *ch3SNR = new TH1D("ch3SNR", "Channel 3 SNR", 100, 0, 60);
-	TH1D *ch4SNR = new TH1D("ch4SNR", "Channel 4 SNR", 100, 0, 60);
+	TH1D *ch1SNR = new TH1D("ch1SNR", "Channel 1 SNR", 1000, 0, 100);
+	TH1D *ch2SNR = new TH1D("ch2SNR", "Channel 2 SNR", 1000, 0, 100);
+	TH1D *ch3SNR = new TH1D("ch3SNR", "Channel 3 SNR", 1000, 0, 100);
+	TH1D *ch4SNR = new TH1D("ch4SNR", "Channel 4 SNR", 1000, 0, 100);
 	TH1D *hSNR[] = { ch1SNR, ch2SNR, ch3SNR, ch4SNR };
 
-	TH2D *chSNRvdt = new TH2D("chSNRvdt", "dt vs. SNR", 1000, -1, 1, 1000, 0, 60);
-
-
-
+	TH2D *chSNRvdt = new TH2D("chSNRvdt", "dt vs. SNR", 10000, -20, 20, 1000, 0, 70);
 
 	TH1D *ch1rise_time = new TH1D("ch1rise_time", "Channel 1 Rise Time", 1000, 0, 10);
 	TH1D *ch2rise_time = new TH1D("ch2rise_time", "Channel 2 Rise Time", 1000, 0, 10);
@@ -170,7 +167,7 @@ void pulsedt(const char *filename){
 	int interp_pts_up = 2; // # points above the principle point
 	int interp_pts_down = 2; // # points below the principle point
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
-	int interp_pts_peak = 5;
+	int interp_pts_peak = 1;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
 	TGraph *interp_graphpeak = new TGraph(2*interp_pts_peak+1);
 
@@ -203,8 +200,6 @@ void pulsedt(const char *filename){
 					for (int j=0; j<1024; j++) { waveform[c][j] = raw_waveform[c][j];}
 			}
 		}
-
-
 
 		int signal_good[4] = { 0, 0, 0, 0 };
 		// discard is logically boolean. Its value is the repeat channel + 1
@@ -264,7 +259,7 @@ void pulsedt(const char *filename){
 			continue;
 		}
 
-		// 	g->SetPoint(i, time, 1.0 + TMath::Sin(TMath::TwoPi() * i / 99.0));
+		//g->SetPoint(i, time, 1.0 + TMath::Sin(TMath::TwoPi() * i / 99.0));
 		//g->Draw("AF");
 		//std::cout << "g->Integral() = " << g->Integral() << std::endl;
 
@@ -285,7 +280,7 @@ void pulsedt(const char *filename){
 			for (int j = skip;j<=4*skip;j++){
 				baseline[c]+=waveform[c][j];
 			}
-			baseline[c] = baseline[c]/(3*skip);
+			baseline[c] = baseline[c]/(3*float(skip));
 			variance[c] = 0;
 			for (int j = skip;j<=4*skip;j++){
 				variance[c]+=(waveform[c][j]-baseline[c])*(waveform[c][j]-baseline[c]);
@@ -293,6 +288,7 @@ void pulsedt(const char *filename){
 			variance[c] /=(3*skip);
 			variance[c] = sqrt(variance[c]);
 		}
+
 		for (int j=0+skip; j<1024-skip; j++) {
 			for (int k=0; k<nactive_channels; k++) {
 				unsigned int c = active_channels[k] - 1;
@@ -304,6 +300,7 @@ void pulsedt(const char *filename){
 				}
 			}
 		}
+
 		for (int j=0+skip; j<1024-skip; j++) {
 			for (int k=0; k<nactive_channels; k++) {
 				unsigned int c = active_channels[k] - 1;
@@ -335,19 +332,20 @@ void pulsedt(const char *filename){
 		int area_range = 50;
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
-			for (int m=-interp_pts_peak;m<=interp_pts_peak;m++){
-				interp_graphpeak->SetPoint(m+interp_pts_peak,time[c][peak_idx[c]+m],fabs(waveform[c][peak_idx[c]+m]));
-			}
+			ROOT::Math::Interpolator inter(1024, ROOT::Math::Interpolation::kCSPLINE);
+			inter.SetData(1024,time[c],waveform[c]);
 			//TGraph *grin, *grout;
 			//TGraphSmooth *gs = new TGraphSmooth("supsmu");
-			TSpline3 *s = new TSpline3("grs",interp_graphpeak);
-			double xarr[10000],yarr[10000];
-			xarr[0] = time[c][peak_idx[c]-2];
-			for (int m = 1;m<10000;m++){
-				xarr[m] = xarr[m-1]+.2/1000;
+			//TSpline5 *s = new TSpline5("grs",interp_graphpeak);
+			int splinenum = 100000;
+			double xarr[splinenum],yarr[splinenum];
+			xarr[0] = time[c][peak_idx[c]-interp_pts_peak];
+			double dT = (time[c][peak_idx[c]+interp_pts_peak]-time[c][peak_idx[c]-interp_pts_peak])/float(splinenum);
+			for (int m = 1;m<splinenum;m++){
+				xarr[m] = xarr[m-1]+dT;
 			}
-			for(int m=0; m<1000; m++) {
-				yarr[m] = s->Eval(xarr[m]);
+			for(int m=0; m<splinenum; m++) {
+				yarr[m] = inter.Eval(xarr[m]); //s->Eval(xarr[m])
 				if(fabs(yarr[m])>fabs(peak_val[c])){peak_val[c]=yarr[m];}
 			}
 
@@ -400,49 +398,121 @@ void pulsedt(const char *filename){
 
 		// Interpolate to find base
 		double frac_time[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
-
+		double slope[4] = { 1000, 1000, 1000, 1000 }; // Beyond 200ns window
+		double t = 0;
+		double t1 = 0;
+		double t9 = 0;
+		int splinenum = 10000;
+		double xarr[splinenum];
+		double yarr[splinenum];
+		double dT = 0;
 		for (int k=0; k<nactive_channels; k++) {
 			unsigned int c = active_channels[k] - 1;
 			double vf = baseline[c]+(peak_val[c]-baseline[c]) * cfd_frac;
 			double vf9 = baseline[c]+(peak_val[c]-baseline[c]) * .8;
 			double vf1 = baseline[c]+(peak_val[c]-baseline[c]) * .2;
+			ROOT::Math::Interpolator interp(1024, ROOT::Math::Interpolation::kAKIMA_PERIODIC);
+			interp.SetData(1024,time[c],waveform[c]);
+			t = 0;
+			t9 = 0;
+			t1 = 0;
 			for (int j=peak_idx[c]; j>skip 	; j--) {
+
+				//printf("%f\n",time[c][j]);
 				//printf("Peak value: %f, wvfm value: %f, j: %d,c: %d\n",fabs(vf),fabs(waveform[c][j]),j,c);
-				if (fabs(waveform[c][j]) < vf) {
-					double t = -1000;
-						for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
-							int idx = j + p;
-							double t = time[c][idx];
-							double v = fabs(waveform[c][idx]);
-							// swap x and y because we can't eval on y
-							interp_graph->SetPoint(interp_pts_down+p, t, v); //To solve for "Zeros" later
+				if (fabs(waveform[c][j]) < vf && fabs(waveform[c][j+1])>= vf&& t==0){
+					print_graph(time[c],waveform[c]);
+					return;
+					for (int p=-interp_pts_down; p<=interp_pts_up; p++) {
+						int idx = j + p;
+						double t = time[c][idx];
+						double v = fabs(waveform[c][idx]);
+						// swap x and y because we can't eval on y
+						interp_graph->SetPoint(interp_pts_down+p, t, v); //To solve for "Zeros" later
+						}
+
+					dT = (time[c][j+1]-time[c][j])/float(splinenum);
+					for (int m = 0;m<splinenum;m++){
+						xarr[m] = time[c][j]+float(m)*dT;
+						yarr[m] = interp.Eval(xarr[m]);
+						if(fabs(yarr[m]) >vf && fabs(yarr[m-1]) <= vf){
+							double X1 = xarr[m-1];
+							double X2 = xarr[m];
+							double Y1 = yarr[m-1];
+							double Y2 = yarr[m];
+							double slope = (Y2-Y1)/(X2-X1);
+							t = X1 + (vf-Y1)/slope;
+							//printf("t (%d): %f,%f,%f,%f\n",i,fabs(yarr[m]),fabs(yarr[m-1]),vf,t);
+							break;
+						}
+					}
+				}
+					if (fabs(waveform[c][j]) < vf9 && fabs(waveform[c][j+1])>= vf9&& t9==0){
+						dT = (time[c][j+1]-time[c][j])/float(splinenum);
+						for (int m = 0;m < splinenum;m++){
+							xarr[m] = time[c][j]+float(m)*dT;
+							yarr[m] = interp.Eval(xarr[m]);
+							if(fabs(yarr[m]) >vf9 && fabs(yarr[m-1]) <= vf9){
+								double X1 = xarr[m-1];
+								double X2 = xarr[m];
+								double Y1 = yarr[m-1];
+								double Y2 = yarr[m];
+								double slope = (Y2-Y1)/(X2-X1);
+								t9 = X1 + (vf9-Y1)/slope;
+								//printf("t9 (%d): %f,%f,%f,%f\n",i,fabs(yarr[m]),fabs(yarr[m-1]),vf9,t9);
+								break;
 							}
+						}
+					}
+						if (fabs(waveform[c][j]) < vf1 && fabs(waveform[c][j+1])>= vf1 && t1==0){
+							dT = (time[c][j+1]-time[c][j])/float(splinenum);
+							for (int m = 0;m<splinenum;m++){
+								xarr[m] = time[c][j]+float(m)*dT;
+								yarr[m] = interp.Eval(xarr[m]);
+								if(fabs(yarr[m]) > vf1 && fabs(yarr[m-1]) <= vf1){
+									double X1 = xarr[m-1];
+									double X2 = xarr[m];
+									double Y1 = yarr[m-1];
+									double Y2 = yarr[m];
+									double slope = (Y2-Y1)/(X2-X1);
+									t1 = X1 + (vf1-Y1)/slope;
+									//printf("t1 (%d): %f,%f,%f,%f\n",i,fabs(yarr[m]),fabs(yarr[m-1]),vf1,t1);
+									break;
+								}
+							}
+						}
 
 						if (interp_type == 1) {
 							t=interp_graph->Eval(vf, 0, "S");
 
 						} else {
-
-							TF1 *r;
-							TF1 *r1 = new TF1("f1","pol1");
-							TF1 *r3 = new TF1("f3","pol4");
-							TF1 *r5 = new TF1("f5","pol5");
-							interp_graph->Fit("f1","SQIF","ROB=.9");
-							interp_graph->Fit("f3","SQIF","ROB=.9");
-							interp_graph->Fit("f5","SQIF","ROB=.9");
-							double chi1 = r1->GetChisquare();
-							double chi3 = r3->GetChisquare();
-							double chi5 = r5->GetChisquare();
-							if (chi1<=chi3&&chi1<=chi5){r = r1;}
-							if (chi3<=chi1&&chi3<=chi5){r = r3;}
-							if (chi5<=chi1&&chi5<=chi3){r = r5;}
-							t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
-							rise_time[c] = r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
+							// TF1 *r;
+							// TF1 *r1 = new TF1("f1","pol1");
+							// TF1 *r3 = new TF1("f3","pol4");
+							// TF1 *r5 = new TF1("f5","pol5");
+							// interp_graph->Fit("f1","SQIF");
+							// interp_graph->Fit("f3","SQIF");
+							// interp_graph->Fit("f5","SQIF");
+							// double chi1 = r1->GetChisquare();
+							// double chi3 = r3->GetChisquare();
+							// double chi5 = r5->GetChisquare();
+							// if (chi1<=chi3&&chi1<=chi5){r = r1;}
+							// if (chi3<=chi1&&chi3<=chi5){r = r3;}
+							// if (chi5<=chi1&&chi5<=chi3){r = r5;}
+							// t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
+							if (t!=0&&t9!=0&&t1!=0){
+							//printf("%f,%f,%f\n",t,t9,t1);
+							rise_time[c] = t9-t1;//r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
+						  slope[c] = (vf9-vf1)/rise_time[c];
 							hrise_time[c]->Fill(rise_time[c]);
+
+						}
+						//	printf("%f,%f\n",rise_time[c],t);
 							//printf("y = %f*x+%f; t = %f\n",m,b,(vf-b)/m);
 						}
-						frac_time[c] = t;
-						if (t != -1000){
+
+						if (t!=0&&t9!=0&&t1!=0){
+							frac_time[c] = t;
 							break;
 						}
 					if (j == skip) {
@@ -450,17 +520,23 @@ void pulsedt(const char *filename){
 					}
 				}
 			}
-		}
 					// delta t
 
 		std::vector<double> dt;
 		std::vector<double> meanSNR;
+		std::vector<double> test;
 		for (int j=0; j<nactive_channels; j++) {
 			for (int k=j+1; k<nactive_channels; k++) {
 				unsigned int c1 = active_channels[j] - 1;
 				unsigned int c2 = active_channels[k] - 1;
 				double t = (frac_time[c1] - frac_time[c2]);
-				meanSNR.push_back((10*log10((peak_val[c1]*peak_val[c1])/(variance[c1]*variance[c1]))+10*log10((peak_val[c2]*peak_val[c2])/(variance[c2]*variance[c2])))/2);
+				double SNR = (10*log10((peak_val[c1]*peak_val[c1])/(variance[c1]*variance[c1]))+10*log10((peak_val[c2]*peak_val[c2])/(variance[c2]*variance[c2])))/2;
+				meanSNR.push_back(SNR);
+				test.push_back((rise_time[c1]+rise_time[c2])/2);
+				//double val1 = sqrt(.01*.01+(variance[c1]/peak_val[c1]*(1/(slope[c1])))*(variance[c1]/peak_val[c1]*(1/(slope[c1]))));
+				//double val2 = sqrt(.01*.01+(variance[c2]/peak_val[c2]*(1/(slope[c2])))*(variance[c2]/peak_val[c2]*(1/(slope[c2]))));
+
+				//meanSNR.push_back((val1+val2)/2);
 				// if (fabs(t)>.2){
 				// 	print_graph(time[c1], waveform[c1]);
 				// 	return;
@@ -480,7 +556,7 @@ void pulsedt(const char *filename){
 		}
 		for (int j=0; j<dt.size(); j++) {
 			hdt[j]->Fill(dt[j]);
-			chSNRvdt->Fill(dt[j],meanSNR[j]);
+			chSNRvdt->Fill(dt[j],test[j]);
 		}
 	}
 	puts("100%\n");
