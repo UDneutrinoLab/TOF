@@ -1,6 +1,7 @@
 #include <TROOT.h>
 #include <math.h>
 #include <Math/Interpolator.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <vector>
 #include "Kalman.h"
@@ -19,8 +20,13 @@ double pulsearea_range = 300E9;
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
+<<<<<<< HEAD
 double repeat_thresh = 0.495; // When checking for clipping, signal must be > this threshold
 unsigned int repeat_max = 0; // Discard if (# repeated values) > repeat_max
+=======
+double repeat_thresh = 0.49; // When checking for clipping, signal must be > this threshold
+unsigned int repeat_max = 3; // Discard if (# repeated values) > repeat_max
+>>>>>>> 1f6a0cc752f41c4a575c6be737e94f56411dcae2
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0; // 0 is linear, 1 is cubic spline
@@ -152,7 +158,7 @@ void pulsedt(const char *filename){
 			ss2 << "#Deltat_{" << c1 << c2 << "}";
 			//TH1D *h = new TH1D(&name[0], &name[0], 1024, 0, 200);
 			//TH1D *h = new TH1D(&name[0], &name[0], 2048, -60, 60);
-			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 10000, -30, 30);
+			TH1D *h = new TH1D(ss1.str().c_str(), ss2.str().c_str(), 10000, -1, 1);
 			hdt.push_back(h);
 			//printf("%d %d (%d %d) %s\n", i, j, c1, c2, name);
 		}
@@ -169,7 +175,7 @@ void pulsedt(const char *filename){
 	int ninterp_pts = interp_pts_up + 1 + interp_pts_down;
 	int interp_pts_peak = 1;
 	TGraph *interp_graph = new TGraph(ninterp_pts);
-	TGraph *interp_graphpeak = new TGraph(2*interp_pts_peak+1);
+	TGraph *interp_graphpeak = new TGraph(interp_pts_peak);
 
 	// filtered
 	double waveform[4][1024];
@@ -486,6 +492,7 @@ void pulsedt(const char *filename){
 							t=interp_graph->Eval(vf, 0, "S");
 
 						} else {
+<<<<<<< HEAD
 							// TF1 *r;
 							// TF1 *r1 = new TF1("f1","pol1");
 							// TF1 *r3 = new TF1("f3","pol4");
@@ -504,6 +511,25 @@ void pulsedt(const char *filename){
 							//printf("%f,%f,%f\n",t,t9,t1);
 							rise_time[c] = t9-t1;//r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
 						  slope[c] = (vf9-vf1)/rise_time[c];
+=======
+
+							TF1 *r;
+							TF1 *r1 = new TF1("f1","pol1");
+							TF1 *r3 = new TF1("f3","pol4");
+							TF1 *r5 = new TF1("f5","pol5");
+							interp_graph->Fit("f1","SQIF","ROB=.9");
+							interp_graph->Fit("f3","SQIF","ROB=.9");
+							interp_graph->Fit("f5","SQIF","ROB=.9");
+							double chi1 = r1->GetChisquare();
+							double chi3 = r3->GetChisquare();
+							double chi5 = r5->GetChisquare();
+							if (chi1<=chi3&&chi1<=chi5){r = r1;}
+							if (chi3<=chi1&&chi3<=chi5){r = r3;}
+							if (chi5<=chi1&&chi5<=chi3){r = r5;}
+							r = r1;
+							t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
+							rise_time[c] = r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
+>>>>>>> 1f6a0cc752f41c4a575c6be737e94f56411dcae2
 							hrise_time[c]->Fill(rise_time[c]);
 
 						}
@@ -686,10 +712,20 @@ void pulsedt(const char *filename){
 	cpa->BuildLegend();
 	printf("Kept %lld/%lld events\n", (nentries-ndiscarded), nentries);
 
-	// XXX THIS IS BAD
+	std::string infile = filename;
+	size_t dot_pos = infile.rfind('.');
+	size_t sep_pos = infile.rfind('/');
+	std::string basename = infile.substr(sep_pos+1, dot_pos - sep_pos - 1);
+	std::string outdir = infile.substr(0, sep_pos);
+	mkdir((outdir+"/"+basename).c_str(), 0755);
 	std::stringstream ss;
-	ss << "histograms_" << filename;
+	ss << outdir << "/" << basename << "/" << basename << ".root";
 	TFile *outfile = new TFile(ss.str().c_str(), "RECREATE");
+
+	std::cout << "basename: " << basename << std::endl;
+	std::cout << "outdir: " << outdir << std::endl;
+	std::cout << "outdir/basename: " << outdir+"/"+basename << std::endl;
+	std::cout << "file: " << ss.str().c_str() << std::endl;
 
 	ch1waveforms->Write();
 	ch2waveforms->Write();
