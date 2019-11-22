@@ -1,5 +1,6 @@
 #include <TROOT.h>
 #include <math.h>
+#include <sys/stat.h>
 
 #include <stdio.h>
 #include <vector>
@@ -19,8 +20,8 @@ double pulsearea_range = 300E9;
 // Settings
 double cfd_frac = 0.5;// Fraction of height to measure to
 int skip = 32; // Skip start and end of signal
-double repeat_thresh = 0.495; // When checking for clipping, signal must be > this threshold
-unsigned int repeat_max = 2; // Discard if (# repeated values) > repeat_max
+double repeat_thresh = 0.49; // When checking for clipping, signal must be > this threshold
+unsigned int repeat_max = 3; // Discard if (# repeated values) > repeat_max
 //double signal_thresh[4] = { 0.025, 0.02, 0.025, 0.025 }; // Discard if whole signal < signal_thresh
 double signal_thresh[4] = { 0.01, 0.01, 0.01	, 0.01 }; // Discard if whole signal < signal_thresh
 int interp_type = 0; // 0 is linear, 1 is cubic spline
@@ -436,6 +437,7 @@ void pulsedt(const char *filename){
 							if (chi1<=chi3&&chi1<=chi5){r = r1;}
 							if (chi3<=chi1&&chi3<=chi5){r = r3;}
 							if (chi5<=chi1&&chi5<=chi3){r = r5;}
+							r = r1;
 							t = r->GetX(vf,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf-b)/m;
 							rise_time[c] = r->GetX(vf9,time[c][j-interp_pts_down],time[c][j+interp_pts_up])-r->GetX(vf1,time[c][j-interp_pts_down],time[c][j+interp_pts_up]);//(vf9-b)/m - (vf1-b)/m;
 							hrise_time[c]->Fill(rise_time[c]);
@@ -610,10 +612,20 @@ void pulsedt(const char *filename){
 	cpa->BuildLegend();
 	printf("Kept %lld/%lld events\n", (nentries-ndiscarded), nentries);
 
-	// XXX THIS IS BAD
+	std::string infile = filename;
+	size_t dot_pos = infile.rfind('.');
+	size_t sep_pos = infile.rfind('/');
+	std::string basename = infile.substr(sep_pos+1, dot_pos - sep_pos - 1);
+	std::string outdir = infile.substr(0, sep_pos);
+	mkdir((outdir+"/"+basename).c_str(), 0755);
 	std::stringstream ss;
-	ss << "histograms_" << filename;
+	ss << outdir << "/" << basename << "/" << basename << ".root";
 	TFile *outfile = new TFile(ss.str().c_str(), "RECREATE");
+
+	std::cout << "basename: " << basename << std::endl;
+	std::cout << "outdir: " << outdir << std::endl;
+	std::cout << "outdir/basename: " << outdir+"/"+basename << std::endl;
+	std::cout << "file: " << ss.str().c_str() << std::endl;
 
 	ch1waveforms->Write();
 	ch2waveforms->Write();
